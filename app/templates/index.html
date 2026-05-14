@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Recognition Pro 2.0</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 24px;
+            padding: 60px;
+            text-align: center;
+            max-width: 600px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+        }
+        
+        .container i {
+            font-size: 4em;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 15px;
+        }
+        
+        p {
+            color: #64748b;
+            font-size: 1.1em;
+            margin-bottom: 30px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 16px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        
+        .features {
+            margin-top: 40px;
+            text-align: left;
+        }
+        
+        .feature {
+            padding: 15px 20px;
+            margin: 12px 0;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .feature i {
+            font-size: 1.2em;
+            color: #667eea;
+            margin: 0;
+        }
+        
+        .feature span {
+            color: #374151;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <i class="fas fa-face-smile"></i>
+        <h1>Face Recognition Pro 2.0</h1>
+        <p>Sistema profissional de reconhecimento facial com inteligência artificial</p>
+        <a href="/dashboard" class="btn">Acessar Dashboard</a>
+        
+        <div class="features">
+            <div class="feature">
+                <i class="fas fa-brain"></i>
+                <span>Reconhecimento com DeepFace (Facenet512)</span>
+            </div>
+            <div class="feature">
+                <i class="fas fa-eye"></i>
+                <span>Detecção avançada com RetinaFace</span>
+            </div>
+            <div class="feature">
+                <i class="fas fa-shield-alt"></i>
+                <span>Anti-spoofing com detecção de vivacidade</span>
+            </div>
+            <div class="feature">
+                <i class="fas fa-clock"></i>
+                <span>Controle de presença automatizado</span>
+            </div>
+            <div class="feature">
+                <i class="fas fa-server"></i>
+                <span>API RESTful completa</span>
+            </div>
+            <div class="feature">
+                <i class="fas fa-file-export"></i>
+                <span>Exportação de relatórios (Excel/PDF)</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

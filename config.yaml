@@ -1,0 +1,89 @@
+# ==========================================
+# Face Recognition Pro 2.0 - Configuration
+# ==========================================
+# WARNING: Do NOT store secrets in this file!
+# All sensitive values must be set in .env file
+# See .env.example for reference
+
+app_name: "Face Recognition Pro 2.0"
+version: "2.0.0"
+
+server:
+  host: "0.0.0.0"
+  port: 8001
+  reload: false
+
+database:
+  type: "sqlite"
+  # Path is relative to project root
+  path: "data/face_recognition.db"
+  echo: false
+
+face_recognition:
+  # Model options: Facenet, Facenet512, OpenFace, DeepID, ArcFace, Dlib, SFace
+  model: "Facenet512"
+  # Detector options: retinaface, mtcnn, opencv, ssd, dlib
+  detector: "retinaface"
+  distance_metric: "cosine"
+  # Threshold for face matching (0-1, lower = stricter)
+  threshold: 0.3
+  enforce_detection: true
+  detector_threshold: 0.7
+  # Image normalization
+  normalization: "base"  # base, raw, Facenet
+  # Face alignment
+  align: true
+  # Logging cooldown to avoid repeated logs for the same person (seconds)
+  log_cooldown_seconds: 5
+  # Multi-frame confirmation window (seconds)
+  confirmation_window_seconds: 2.5
+  # Minimum recognized frames in the window before logging access
+  confirmation_min_frames: 3
+
+anti_spoofing:
+  enabled: true
+  blink_detection: true
+  min_blinks: 2
+  blink_timeout: 3
+  liveness_check: true
+
+video:
+  default_source: 0
+  fps_limit: 30
+  frame_skip: 2
+  resolution:
+    width: 1280
+    height: 720
+
+presence:
+  timeout_seconds: 60
+  auto_checkout_enabled: true
+
+logging:
+  level: "INFO"
+  log_file: "logs/face_recognition.log"
+  max_size_mb: 10
+  backup_count: 5
+
+export:
+  reports_dir: "data/reports"
+  formats: ["xlsx", "pdf"]
+
+cameras:
+  enabled: false
+  sources: []
+  rtsp_enabled: false
+
+# Security settings (non-sensitive only)
+security:
+  jwt_algorithm: "HS256"
+  access_token_expire_minutes: 60
+  # Rate limiting
+  rate_limit_max_requests: 100
+  rate_limit_window_seconds: 60
+  auth_max_attempts: 5
+  auth_block_duration: 900
+  # CORS - override with ALLOWED_ORIGINS env var
+  cors_origins:
+    - "http://localhost:8001"
+    - "http://127.0.0.1:8001"

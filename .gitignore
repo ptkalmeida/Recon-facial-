@@ -1,0 +1,40 @@
+# Environment
+.env
+.venv/
+.venv313/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Data
+data/
+logs/
+scratch/
+images/
+
+# Backups
+backup_*.zip
+
+# GitHub / AI tooling
+.qwen/
+.agents/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Encryption / secrets
+*.enc
+*.key

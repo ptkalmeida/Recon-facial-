@@ -1,0 +1,632 @@
+import os
+import numpy as np
+import cv2
+import time
+import threading
+from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from insightface.app import FaceAnalysis
+    HAS_INSIGHTFACE = True
+except ImportError:
+    HAS_INSIGHTFACE = False
+    logger.warning("insightface não disponível")
+
+# Try DeepFace first (best accuracy)
+try:
+    from deepface import DeepFace
+    from deepface.commons import distance as dst
+    HAS_DEEPFACE = True
+    logger.info("DeepFace loaded successfully")
+except ImportError as e:
+    HAS_DEEPFACE = False
+    logger.warning(f"DeepFace not available: {e}")
+
+# Fallback to face_recognition (dlib)
+try:
+    import face_recognition
+    HAS_FACE_RECOGNITION = True
+except ImportError:
+    HAS_FACE_RECOGNITION = False
+    logger.warning("face_recognition (dlib) não disponível")
+
+# Fallback to MediaPipe
+try:
+    import mediapipe as mp
+    import mediapipe.solutions.face_detection as mp_face_detection
+    HAS_MEDIAPIPE = True
+except (ImportError, AttributeError):
+    HAS_MEDIAPIPE = False
+    logger.warning("mediapipe não disponível ou incompleto")
+
+
+@dataclass
+class FaceDetection:
+    confidence: float
+    x: int
+    y: int
+    w: int
+    h: int
+    landmarks: Optional[Dict[str, Tuple[int, int]]] = None
+
+
+class FaceRecognitionService:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.fr_config = config.get("face_recognition", {})
+        
+        # DeepFace configuration
+        self.model_name = self.fr_config.get("model", "Facenet512")
+        self.detector_backend = self.fr_config.get("detector", "retinaface")
+        self.distance_metric = self.fr_config.get("distance_metric", "cosine")
+        self.threshold = self.fr_config.get("threshold", 0.4)
+        self.enforce_detection = self.fr_config.get("enforce_detection", True)
+        self.align = self.fr_config.get("align", True)
+        self.normalization = self.fr_config.get("normalization", "base")
+        
+        self.anti_spoofing_config = config.get("anti_spoofing", {})
+        self.anti_spoofing_enabled = self.anti_spoofing_config.get("enabled", True)
+        
+        self._initialized = False
+        self._lock = threading.Lock()
+        
+        self._known_embeddings: Dict[int, np.ndarray] = {}
+        self._known_users: Dict[int, str] = {}
+        self._insightface_app = None
+        
+        # Frame history per camera for liveness detection
+        self._frame_history: Dict[str, np.ndarray] = {}
+        
+    def initialize(self) -> bool:
+        global HAS_MEDIAPIPE
+        if self._initialized:
+            return True
+        
+        # Priority 0: InsightFace
+        if HAS_INSIGHTFACE:
+            try:
+                self._insightface_app = FaceAnalysis(name="buffalo_l")
+                self._insightface_app.prepare(ctx_id=0, det_size=(640, 640))
+                self._initialized = True
+                logger.info("FaceRecognitionService initialized with InsightFace (buffalo_l)")
+                return True
+            except Exception as e:
+                logger.error(f"Error initializing InsightFace: {e}")
+                self._insightface_app = None
+
+        # Priority 1: DeepFace (best accuracy)
+        if HAS_DEEPFACE:
+            try:
+                # Test DeepFace with a blank image to trigger model download
+                logger.info("Initializing DeepFace models (this may take a moment)...")
+                test_img = np.ones((100, 100, 3), dtype=np.uint8) * 128
+                try:
+                    DeepFace.detectFace(test_img, detector_backend=self.detector_backend, enforce_detection=False)
+                except:
+                    pass  # Expected to fail on blank image
+                
+                self._initialized = True
+                logger.info(f"FaceRecognitionService initialized with DeepFace ({self.model_name})")
+                return True
+            except Exception as e:
+                logger.error(f"Error initializing DeepFace: {e}")
+        
+        # Priority 2: face_recognition (dlib)
+        if HAS_FACE_RECOGNITION:
+            self._initialized = True
+            logger.info("FaceRecognitionService initialized with face_recognition (dlib)")
+            return True
+        
+        # Priority 3: MediaPipe
+        if HAS_MEDIAPIPE:
+            try:
+                self.mp_face_detection = mp.solutions.face_detection.FaceDetection(
+                    model_selection=1, min_detection_confidence=0.5
+                )
+                self._initialized = True
+                logger.info("FaceRecognitionService initialized with MediaPipe")
+                return True
+            except Exception as e:
+                logger.error(f"Error initializing MediaPipe: {e}")
+                HAS_MEDIAPIPE = False
+            
+        # Fallback 4: OpenCV Haar Cascades
+        logger.warning("Using OpenCV fallback for face detection")
+        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        self.face_cascade = cv2.CascadeClassifier(cascade_path)
+        self._initialized = True
+        logger.info("FaceRecognitionService using OpenCV Haar Cascade fallback")
+        return True
+    
+    def load_known_faces(self, embeddings_data: List[Dict[str, Any]]) -> bool:
+        try:
+            with self._lock:
+                self._known_embeddings.clear()
+                self._known_users.clear()
+                
+                for emb_data in embeddings_data:
+                    user_id = emb_data.get("user_id")
+                    embedding = emb_data.get("embedding_data")
+                    
+                    if user_id and embedding:
+                        self._known_embeddings[user_id] = np.array(embedding)
+                        self._known_users[user_id] = emb_data.get("user_name", "")
+                
+                logger.info(f"Carregados {len(self._known_embeddings)} rostos conhecidos")
+                return True
+        except Exception as e:
+            logger.error(f"Erro ao carregar rostos conhecidos: {e}")
+            return False
+    
+    def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """L2 normalize an embedding vector."""
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            return embedding / norm
+        return embedding
+    
+    def detect_faces(self, frame: np.ndarray) -> List[FaceDetection]:
+        """Detect faces using available backend (DeepFace priority)."""
+        detections = []
+
+        # Priority 0: InsightFace
+        if self._insightface_app is not None:
+            try:
+                faces = self._insightface_app.get(frame)
+                for face in faces:
+                    x1, y1, x2, y2 = [int(v) for v in face.bbox]
+                    detections.append(
+                        FaceDetection(
+                            confidence=float(getattr(face, "det_score", 0.9)),
+                            x=x1,
+                            y=y1,
+                            w=max(0, x2 - x1),
+                            h=max(0, y2 - y1),
+                        )
+                    )
+                return detections
+            except Exception as e:
+                logger.error(f"InsightFace detection error: {e}")
+        
+        # Priority 1: DeepFace
+        if HAS_DEEPFACE:
+            try:
+                face_objs = DeepFace.extract_faces(
+                    frame,
+                    detector_backend=self.detector_backend,
+                    enforce_detection=False,
+                    align=self.align,
+                    expand_percentage=10
+                )
+                
+                for face_obj in face_objs:
+                    facial_area = face_obj.get("facial_area", {})
+                    confidence = face_obj.get("confidence", 0.8)
+                    
+                    x = facial_area.get("x", 0)
+                    y = facial_area.get("y", 0)
+                    w = facial_area.get("w", 0)
+                    h = facial_area.get("h", 0)
+                    
+                    detections.append(FaceDetection(
+                        confidence=float(confidence),
+                        x=int(x),
+                        y=int(y),
+                        w=int(w),
+                        h=int(h)
+                    ))
+                return detections
+            except Exception as e:
+                logger.error(f"DeepFace detection error: {e}")
+        
+        # Priority 2: face_recognition (dlib)
+        if HAS_FACE_RECOGNITION:
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(rgb_frame, model="hog")
+                
+                for face_location in face_locations:
+                    top, right, bottom, left = face_location
+                    detections.append(FaceDetection(
+                        confidence=0.9,
+                        x=left,
+                        y=top,
+                        w=right - left,
+                        h=bottom - top
+                    ))
+            except Exception as e:
+                logger.error(f"Erro na detecção com face_recognition: {e}")
+                
+        elif HAS_MEDIAPIPE:
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.mp_face_detection.process(rgb_frame)
+                
+                if results.detections:
+                    h_frame, w_frame, _ = frame.shape
+                    for detection in results.detections:
+                        bbox = detection.location_data.relative_bounding_box
+                        detections.append(FaceDetection(
+                            confidence=detection.score[0],
+                            x=int(bbox.xmin * w_frame),
+                            y=int(bbox.ymin * h_frame),
+                            w=int(bbox.width * w_frame),
+                            h=int(bbox.height * h_frame)
+                        ))
+            except Exception as e:
+                logger.error(f"Erro na detecção com MediaPipe: {e}")
+        else:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = self.face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+            
+            for (x, y, w, h) in faces:
+                detections.append(FaceDetection(
+                    confidence=0.7,
+                    x=x,
+                    y=y,
+                    w=w,
+                    h=h
+                ))
+        
+        return detections
+    
+    def extract_embedding(self, frame: np.ndarray, face_detection: FaceDetection) -> Optional[np.ndarray]:
+        """Extract face embedding using available backend (DeepFace priority)."""
+        try:
+            x, y, w, h = face_detection.x, face_detection.y, face_detection.w, face_detection.h
+            
+            padding_x = int(w * 0.1)
+            padding_y = int(h * 0.1)
+            
+            x1 = max(0, x - padding_x)
+            y1 = max(0, y - padding_y)
+            x2 = min(frame.shape[1], x + w + padding_x)
+            y2 = min(frame.shape[0], y + h + padding_y)
+            
+            face_crop = frame[y1:y2, x1:x2]
+            
+            if face_crop.size == 0:
+                return None
+            
+            # Priority 0: InsightFace
+            if self._insightface_app is not None:
+                try:
+                    faces = self._insightface_app.get(face_crop)
+                    if faces and len(faces) > 0:
+                        emb = np.array(faces[0].normed_embedding, dtype=np.float32)
+                        return self._normalize_embedding(emb)
+                except Exception as e:
+                    logger.error(f"InsightFace embedding error: {e}")
+
+            # Priority 1: DeepFace
+            if HAS_DEEPFACE:
+                try:
+                    embedding_objs = DeepFace.represent(
+                        face_crop,
+                        model_name=self.model_name,
+                        enforce_detection=False,
+                        detector_backend=self.detector_backend,
+                        align=self.align,
+                        normalization=self.normalization
+                    )
+                    
+                    if embedding_objs and len(embedding_objs) > 0:
+                        embedding = np.array(embedding_objs[0]["embedding"], dtype=np.float32)
+                        return self._normalize_embedding(embedding)
+                except Exception as e:
+                    logger.error(f"DeepFace embedding error: {e}")
+            
+            # Priority 2: face_recognition (dlib)
+            if HAS_FACE_RECOGNITION:
+                rgb_face = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+                encodings = face_recognition.face_encodings(rgb_face)
+                
+                if encodings and len(encodings) > 0:
+                    return encodings[0]
+            
+            # Fallback: HOG features
+            return self._extract_hog_features(face_crop)
+                    
+        except Exception as e:
+            logger.error(f"Erro ao extrair embedding: {e}")
+            
+        return None
+    
+    def _extract_hog_features(self, face_crop: np.ndarray) -> Optional[np.ndarray]:
+        """Extração de características espaciais (Grid-based Histogram) para maior precisão"""
+        try:
+            # Redimensionar para tamanho padrão
+            face_resized = cv2.resize(face_crop, (128, 128))
+            
+            # Converter para tons de cinza e equalizar para normalizar iluminação
+            gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+            gray = cv2.equalizeHist(gray)
+            
+            # Dividir a imagem em uma grade 4x4 (16 células)
+            # Isso preserva a informação espacial (onde está o olho, nariz, etc)
+            grid_size = 4
+            h, w = gray.shape
+            cell_h, cell_w = h // grid_size, w // grid_size
+            
+            spatial_features = []
+            
+            for i in range(grid_size):
+                for j in range(grid_size):
+                    cell = gray[i*cell_h:(i+1)*cell_h, j*cell_w:(j+1)*cell_w]
+                    
+                    # Calcular histograma local para esta célula
+                    hist = cv2.calcHist([cell], [0], None, [16], [0, 256])
+                    hist = cv2.normalize(hist, hist).flatten()
+                    spatial_features.append(hist)
+            
+            # Concatenar todos os histogramas locais em um único vetor (embedding)
+            features = np.concatenate(spatial_features)
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"Erro ao extrair features espaciais: {e}")
+            return None
+    
+    def verify_face(self, embedding: np.ndarray) -> Tuple[Optional[int], float, str]:
+        """Verify face against known embeddings."""
+        if not self._known_embeddings:
+            return None, 0.0, "unknown"
+        
+        if embedding is None or embedding.size == 0:
+            return None, 0.0, "unknown"
+        
+        # Normalize query embedding
+        embedding = self._normalize_embedding(embedding)
+        
+        best_match = None
+        best_distance = float("inf")
+        
+        with self._lock:
+            for user_id, known_embedding in self._known_embeddings.items():
+                try:
+                    # Skip if dimensions don't match
+                    if len(embedding) != len(known_embedding):
+                        continue
+                    
+                    # Calculate distance based on metric
+                    if self.distance_metric == "cosine":
+                        similarity = np.dot(embedding, known_embedding)
+                        distance = 1 - similarity
+                    else:
+                        distance = np.linalg.norm(embedding - known_embedding)
+                    
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_match = user_id
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao comparar embeddings: {e}")
+                    continue
+        
+        # Check against threshold
+        if best_match is not None and best_distance < self.threshold:
+            confidence = 1.0 - (best_distance / self.threshold)
+            confidence = max(0.0, min(confidence, 1.0))
+            return best_match, confidence, "known"
+        
+        # Return unknown with rejection confidence
+        rejection_confidence = 1.0 - min(best_distance / (self.threshold * 1.5), 1.0)
+        rejection_confidence = max(0.0, min(rejection_confidence, 1.0))
+        return None, rejection_confidence, "unknown"
+
+    def calibrate_threshold(self, embeddings: List[np.ndarray]) -> Optional[float]:
+        """Auto-calibrate threshold using intra-class distances from registration images.
+        
+        Returns the calibrated threshold value WITHOUT modifying the service's
+        global threshold. The caller decides how to use this value.
+        """
+        if len(embeddings) < 2:
+            return None
+        vectors = [self._normalize_embedding(np.array(e, dtype=np.float32)) for e in embeddings]
+        distances: List[float] = []
+        for i in range(len(vectors)):
+            for j in range(i + 1, len(vectors)):
+                distances.append(1.0 - float(np.dot(vectors[i], vectors[j])))
+        if not distances:
+            return None
+        p95 = float(np.percentile(distances, 95))
+        calibrated = min(max(p95 * 1.35, 0.20), 0.55)
+        logger.info(f"Calibrated threshold for registration: {calibrated:.4f} (global remains {self.threshold})")
+        return calibrated
+    
+    def check_liveness(self, frame: np.ndarray, face_detection: FaceDetection,
+                       camera_id: str = "default") -> Dict[str, Any]:
+        """Check if the face is live using frame-to-frame motion analysis.
+        
+        Compares the current frame against the previous frame for this camera_id.
+        Real faces exhibit micro-movements; photos/videos show static or uniform motion.
+        
+        Args:
+            frame: Current BGR frame.
+            face_detection: Detected face bounding box.
+            camera_id: Camera identifier for per-camera frame history.
+            
+        Returns:
+            Dict with is_live, details.
+        """
+        result = {"is_live": True, "blink_detected": False, "details": {}}
+        
+        if not self.anti_spoofing_enabled:
+            return result
+            
+        try:
+            previous_frame = self._frame_history.get(camera_id)
+            
+            if previous_frame is not None and previous_frame.shape == frame.shape:
+                # Calculate overall frame difference
+                diff = cv2.absdiff(frame, previous_frame)
+                motion_score = float(np.mean(diff))
+                
+                # Calculate face-region specific motion
+                x, y, w, h = face_detection.x, face_detection.y, face_detection.w, face_detection.h
+                x1, y1 = max(0, x), max(0, y)
+                x2, y2 = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+                
+                face_diff = diff[y1:y2, x1:x2]
+                face_motion = float(np.mean(face_diff)) if face_diff.size > 0 else 0.0
+                
+                result["details"]["motion_score"] = motion_score
+                result["details"]["face_motion"] = face_motion
+                
+                # Real faces should have micro-movements
+                result["is_live"] = face_motion > 2.0 or motion_score > 5.0
+            
+            # Store current frame for next comparison (per camera)
+            self._frame_history[camera_id] = frame.copy()
+                
+        except Exception as e:
+            logger.error(f"Erro no check de liveness: {e}")
+            
+        return result
+    
+    def process_frame(self, frame: np.ndarray, camera_id: str = "default") -> Dict[str, Any]:
+        start_time = time.time()
+        
+        detections = self.detect_faces(frame)
+        
+        results = {
+            "frame_id": int(time.time() * 1000),
+            "faces_detected": len(detections),
+            "detections": [],
+            "processing_time_ms": (time.time() - start_time) * 1000
+        }
+        
+        for detection in detections:
+            embedding = self.extract_embedding(frame, detection)
+            
+            if embedding is None:
+                continue
+                
+            user_id, confidence, match_type = self.verify_face(embedding)
+            
+            # Use persistent frame history per camera (not local var)
+            liveness_result = self.check_liveness(frame, detection, camera_id)
+            
+            result_entry = {
+                "x": detection.x,
+                "y": detection.y,
+                "w": detection.w,
+                "h": detection.h,
+                "confidence": detection.confidence,
+                "user_id": user_id,
+                "user_name": self._known_users.get(user_id) if user_id else "Desconhecido",
+                "match_confidence": confidence,
+                "match_type": match_type,
+                "is_live": liveness_result.get("is_live", True),
+                "liveness_details": liveness_result.get("details", {})
+            }
+            
+            results["detections"].append(result_entry)
+            
+        return results
+    
+    def register_face(self, image) -> Optional[np.ndarray]:
+        """Register a face from an image and return its embedding.
+        
+        Args:
+            image: Either a file path (str) or a BGR image (np.ndarray).
+            
+        Returns:
+            Face embedding as numpy array, or None if no face found.
+        """
+        try:
+            # Accept both file path and pre-loaded image
+            if isinstance(image, str):
+                img = cv2.imread(image)
+                if img is None:
+                    logger.error(f"Não foi possível carregar imagem: {image}")
+                    return None
+                source_label = image
+            elif isinstance(image, np.ndarray):
+                img = image
+                if img.size == 0:
+                    logger.error("Imagem vazia recebida para registro")
+                    return None
+                source_label = f"ndarray({img.shape})"
+            else:
+                logger.error(f"Tipo de imagem não suportado: {type(image)}")
+                return None
+                
+            detections = self.detect_faces(img)
+            
+            if not detections:
+                logger.warning(f"Nenhum rosto detectado em: {source_label}")
+                return None
+            
+            # Use the best detection (highest confidence)
+            detection = max(detections, key=lambda d: d.confidence)
+            embedding = self.extract_embedding(img, detection)
+            
+            if embedding is not None:
+                logger.info(f"Rosto registrado com sucesso: {source_label}")
+                
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Erro ao registrar rosto: {e}")
+            return None
+
+
+class CameraCapture:
+    def __init__(self, source: int = 0, fps_limit: int = 30):
+        self.source = source
+        self.fps_limit = fps_limit
+        self.cap = None
+        self.running = False
+        self.current_frame = None
+        self.lock = threading.Lock()
+        
+    def start(self) -> bool:
+        try:
+            self.cap = cv2.VideoCapture(self.source)
+            
+            if not self.cap.isOpened():
+                logger.error(f"Não foi possível abrir a câmera: {self.source}")
+                return False
+                
+            self.running = True
+            self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self._thread.start()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao iniciar captura: {e}")
+            return False
+            
+    def _capture_loop(self):
+        frame_time = 1.0 / self.fps_limit
+        
+        while self.running:
+            start = time.time()
+            
+            if self.cap and self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if ret:
+                    with self.lock:
+                        self.current_frame = frame.copy()
+            
+            elapsed = time.time() - start
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
+                
+    def get_frame(self) -> Optional[np.ndarray]:
+        with self.lock:
+            return self.current_frame.copy() if self.current_frame is not None else None
+            
+    def stop(self):
+        self.running = False
+        if self.cap:
+            self.cap.release()
+            self.cap = None

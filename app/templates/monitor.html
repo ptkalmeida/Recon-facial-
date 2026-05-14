@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoramento 24/7 - Face Recognition Pro 2.0</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --surface-light: #334155;
+            --text: #f1f5f9;
+            --text-light: #94a3b8;
+            --border: #475569;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--background);
+            color: var(--text);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* HEADER */
+        .header {
+            background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 1.4em;
+            font-weight: 700;
+        }
+        
+        .logo i { font-size: 1.8em; }
+        
+        .status-indicators {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.green { background: var(--success); }
+        .status-dot.red { background: var(--danger); }
+        .status-dot.yellow { background: var(--warning); }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            font-size: 0.9em;
+        }
+        
+        .btn-success { background: var(--success); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-warning { background: var(--warning); color: black; }
+        .btn-outline { background: transparent; border: 2px solid var(--border); color: var(--text); }
+        .btn-outline:hover { border-color: var(--primary); }
+        
+        /* MAIN LAYOUT */
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            height: calc(100vh - 70px);
+        }
+        
+        /* VIDEO SECTION */
+        .video-section {
+            position: relative;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .camera-header {
+            padding: 15px 20px;
+            background: var(--surface);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .camera-selector {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .camera-btn {
+            padding: 8px 16px;
+            background: var(--surface-light);
+            border: 2px solid transparent;
+            border-radius: 8px;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .camera-btn.active {
+            border-color: var(--primary);
+            background: var(--primary);
+        }
+        
+        .camera-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9em;
+            color: var(--text-light);
+        }
+        
+        .camera-stats span { display: flex; align-items: center; gap: 5px; }
+        
+        .video-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #webcamVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        #detectionCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .video-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .detection-info {
+            background: rgba(0,0,0,0.7);
+            padding: 12px 18px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border-left: 4px solid var(--primary);
+        }
+        
+        .detection-info.known { border-left-color: var(--success); }
+        .detection-info.unknown { border-left-color: var(--danger); }
+        
+        .detection-name {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .detection-confidence {
+            font-size: 0.9em;
+            color: var(--text-light);
+        }
+        
+        .recording-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 16px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .recording-dot {
+            width: 12px;
+            height: 12px;
+            background: var(--danger);
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .video-placeholder {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            color: var(--text-light);
+        }
+        
+        .video-placeholder i { font-size: 4em; opacity: 0.5; }
+        
+        .video-controls {
+            padding: 15px 20px;
+            background: var(--surface);
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            border-top: 1px solid var(--border);
+        }
+        
+        /* SIDEBAR */
+        .sidebar {
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border);
+        }
+        
+        .sidebar-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .sidebar-tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .sidebar-tab.active {
+            border-bottom-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .sidebar-tab:hover { background: var(--surface-light); }
+        
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .presence-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .presence-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: var(--surface-light);
+            border-radius: 12px;
+            transition: all 0.2s;
+        }
+        
+        .presence-item:hover { background: #3d4a63; }
+        
+        .presence-avatar {
+            width: 50px;
+            height: 50px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            font-weight: 600;
+        }
+        
+        .presence-info { flex: 1; }
+        .presence-name { font-weight: 600; margin-bottom: 3px; }
+        .presence-time { font-size: 0.85em; color: var(--text-light); }
+        
+        .presence-status {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .presence-status.present { background: var(--success); }
+        .presence-status.absent { background: var(--text-light); }
+        
+        /* LOGS */
+        .log-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .log-item {
+            padding: 12px 15px;
+            background: var(--surface-light);
+            border-radius: 8px;
+            border-left: 3px solid var(--border);
+            font-size: 0.9em;
+        }
+        
+        .log-item.success { border-left-color: var(--success); }
+        .log-item.warning { border-left-color: var(--warning); }
+        .log-item.danger { border-left-color: var(--danger); }
+        
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        
+        .log-user { font-weight: 600; }
+        .log-time { color: var(--text-light); font-size: 0.85em; }
+        .log-action { color: var(--text-light); }
+        
+        /* STATS PANEL */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .stat-box {
+            background: var(--surface-light);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .stat-label {
+            font-size: 0.8em;
+            color: var(--text-light);
+            margin-top: 5px;
+        }
+        
+        /* FULLSCREEN */
+        .fullscreen-btn {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+        }
+        
+        /* ALERTS */
+        .alert-popup {
+            position: fixed;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--danger);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            display: none;
+            animation: slideDown 0.3s ease;
+            z-index: 200;
+            font-weight: 500;
+        }
+        
+        .alert-popup.show { display: flex; align-items: center; gap: 10px; }
+        
+        @keyframes slideDown {
+            from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        
+        /* TOAST */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 420px;
+            padding: 15px 25px;
+            background: var(--success);
+            color: white;
+            border-radius: 10px;
+            display: none;
+            z-index: 300;
+        }
+        
+        .toast.show { display: block; }
+        
+        /* NOISE DETECTION */
+        .noise-alert {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(239, 68, 68, 0.95);
+            padding: 40px 60px;
+            border-radius: 20px;
+            text-align: center;
+            display: none;
+            z-index: 250;
+            animation: alertPulse 0.5s ease;
+        }
+        
+        .noise-alert.show { display: block; }
+        
+        .noise-alert i { font-size: 4em; margin-bottom: 20px; }
+        .noise-alert h2 { font-size: 2em; margin-bottom: 10px; }
+        .noise-alert p { opacity: 0.9; }
+        
+        @keyframes alertPulse {
+            0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <i class="fas fa-eye"></i>
+            <span>Monitoramento 24/7</span>
+        </div>
+        
+        <div class="status-indicators">
+            <div class="status-item">
+                <div class="status-dot green" id="systemStatus"></div>
+                <span>Sistema Ativo</span>
+            </div>
+            <div class="status-item">
+                <i class="fas fa-users"></i>
+                <span id="presentCount">0 Presentes</span>
+            </div>
+            <div class="status-item">
+                <i class="fas fa-clock"></i>
+                <span id="currentTime">--:--:--</span>
+            </div>
+        </div>
+        
+        <div class="header-actions">
+            <button class="btn btn-outline" onclick="toggleFullscreen()">
+                <i class="fas fa-expand"></i> Tela Cheia
+            </button>
+            <button class="btn btn-warning" onclick="manualOpenDoor()">
+                <i class="fas fa-door-open"></i> Abrir Porta
+            </button>
+            <button class="btn btn-outline" onclick="goToDashboard()">
+                <i class="fas fa-cog"></i> Configurar
+            </button>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="video-section">
+            <div class="camera-header">
+                <div class="camera-selector">
+                    <button class="camera-btn active" onclick="selectCamera('webcam', this)">
+                        <i class="fas fa-camera"></i> Webcam
+                    </button>
+                    <button class="camera-btn" onclick="selectCamera('ip1', this)">
+                        <i class="fas fa-video"></i> Câmera 1
+                    </button>
+                    <button class="camera-btn" onclick="selectCamera('ip2', this)">
+                        <i class="fas fa-video"></i> Câmera 2
+                    </button>
+                </div>
+                <div class="camera-stats">
+                    <span><i class="fas fa-eye"></i> <span id="facesDetected">0</span> rostos</span>
+                    <span><i class="fas fa-bolt"></i> <span id="fpsCounter">0</span> FPS</span>
+                    <span><i class="fas fa-microchip"></i> <span id="cpuUsage">0</span>% CPU</span>
+                </div>
+            </div>
+            
+            <div class="video-container">
+                <video id="webcamVideo" autoplay playsinline muted></video>
+                <canvas id="detectionCanvas"></canvas>
+                
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <i class="fas fa-video-slash"></i>
+                    <p>Câmera inativa - Clique em "Iniciar Monitoramento"</p>
+                </div>
+                
+                <div class="recording-indicator" id="recordingIndicator" style="display: none;">
+                    <div class="recording-dot"></div>
+                    <span>GRAVANDO</span>
+                </div>
+                
+                <div class="video-overlay" id="detectionOverlay"></div>
+            </div>
+            
+            <div class="video-controls">
+                <button class="btn btn-success" id="startBtn" onclick="startMonitoring()">
+                    <i class="fas fa-play"></i> Iniciar Monitoramento
+                </button>
+                <button class="btn btn-danger" id="stopBtn" onclick="stopMonitoring()" style="display: none;">
+                    <i class="fas fa-stop"></i> Parar
+                </button>
+                <button class="btn btn-outline" onclick="takeSnapshot()">
+                    <i class="fas fa-camera"></i> Captura
+                </button>
+                <button class="btn btn-outline" onclick="playSound()">
+                    <i class="fas fa-volume-up"></i> Som
+                </button>
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="sidebar-tabs">
+                <div class="sidebar-tab active" onclick="switchTab('presence', this)">
+                    <i class="fas fa-users"></i> Presença
+                </div>
+                <div class="sidebar-tab" onclick="switchTab('logs', this)">
+                    <i class="fas fa-list"></i> Logs
+                </div>
+                <div class="sidebar-tab" onclick="switchTab('stats', this)">
+                    <i class="fas fa-chart-line"></i> Stats
+                </div>
+            </div>
+            
+            <div class="sidebar-content">
+                <!-- PRESENCE TAB -->
+                <div id="presenceTab" class="tab-content">
+                    <div class="presence-list" id="presenceList">
+                        <div style="text-align: center; padding: 40px; color: var(--text-light);">
+                            <i class="fas fa-users" style="font-size: 3em; opacity: 0.3; margin-bottom: 15px;"></i>
+                            <p>Nenhum usuário presente</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- LOGS TAB -->
+                <div id="logsTab" class="tab-content" style="display: none;">
+                    <div class="log-list" id="logList"></div>
+                </div>
+                
+                <!-- STATS TAB -->
+                <div id="statsTab" class="tab-content" style="display: none;">
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-value" id="statTotalUsers">0</div>
+                            <div class="stat-label">Total Usuários</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statPresentToday">0</div>
+                            <div class="stat-label">Presentes Hoje</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statAccessToday">0</div>
+                            <div class="stat-label">Acessos Hoje</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statUnknown">0</div>
+                            <div class="stat-label">Desconhecidos</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <h4 style="margin-bottom: 10px; color: var(--text-light);">Histórico de Acesso</h4>
+                        <div id="miniAccessLogs"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="alert-popup" id="alertPopup">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="alertMessage">Pessoa desconhecida detectada!</span>
+    </div>
+    
+    <div class="toast" id="toast">Mensagem</div>
+    
+    <script>
+        let token = localStorage.getItem('token');
+        
+        if (!token) {
+            window.location.href = '/login';
+        }
+        
+        // State
+        let stream = null;
+        let detectionInterval = null;
+        let statsInterval = null;
+        let presenceInterval = null;
+        let logsInterval = null;
+        let isMonitoring = false;
+        let soundEnabled = true;
+        let currentCamera = 'webcam';
+        let lastDetectionTime = 0;
+        let frameCount = 0;
+        let fps = 0;
+        let lastFpsUpdate = Date.now();
+        let detectedFaces = [];
+        
+        const video = document.getElementById('webcamVideo');
+        const canvas = document.getElementById('detectionCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Initialize
+        updateTime();
+        setInterval(updateTime, 1000);
+        
+        async function apiCall(url, options = {}) {
+            const response = await fetch(url, {
+                ...options,
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    ...options.headers
+                }
+            });
+            
+            if (response.status === 401) {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+            }
+            
+            return response;
+        }
+        
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('currentTime').textContent = now.toLocaleTimeString('pt-BR');
+        }
+        
+        async function startMonitoring() {
+            try {
+                document.getElementById('videoPlaceholder').style.display = 'none';
+                document.getElementById('recordingIndicator').style.display = 'flex';
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'inline-flex';
+                
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1920, height: 1080, facingMode: 'user' } 
+                });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startDetectionLoop();
+                    startPeriodicUpdates();
+                };
+                
+                isMonitoring = true;
+                showToast('Monitoramento iniciado!');
+                
+            } catch (e) {
+                console.error('Erro ao iniciar câmera:', e);
+                showAlert('Erro ao acessar câmera: ' + e.message);
+                stopMonitoring();
+            }
+        }
+        
+        function stopMonitoring() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            if (detectionInterval) {
+                clearInterval(detectionInterval);
+                detectionInterval = null;
+            }
+            
+            stopPeriodicUpdates();
+            
+            video.srcObject = null;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            document.getElementById('videoPlaceholder').style.display = 'flex';
+            document.getElementById('recordingIndicator').style.display = 'none';
+            document.getElementById('startBtn').style.display = 'inline-flex';
+            document.getElementById('stopBtn').style.display = 'none';
+            document.getElementById('detectionOverlay').innerHTML = '';
+            document.getElementById('facesDetected').textContent = '0';
+            
+            isMonitoring = false;
+            showToast('Monitoramento parado');
+        }
+        
+        function startDetectionLoop() {
+            const offscreenCanvas = document.createElement('canvas');
+            const offscreenCtx = offscreenCanvas.getContext('2d');
+            
+            detectionInterval = setInterval(async () => {
+                if (!stream || !video.videoWidth) return;
+                
+                // FPS Counter
+                frameCount++;
+                const now = Date.now();
+                if (now - lastFpsUpdate >= 1000) {
+                    fps = frameCount;
+                    frameCount = 0;
+                    lastFpsUpdate = now;
+                    document.getElementById('fpsCounter').textContent = fps;
+                }
+                
+                // Capture frame
+                offscreenCanvas.width = video.videoWidth;
+                offscreenCanvas.height = video.videoHeight;
+                offscreenCtx.drawImage(video, 0, 0);
+                
+                const blob = await new Promise(resolve => offscreenCanvas.toBlob(resolve, 'image/jpeg', 0.7));
+                const formData = new FormData();
+                formData.append('image', blob, 'frame.jpg');
+                
+                try {
+                    const res = await apiCall('/api/recognition/detect', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (res.ok) {
+                        const data = await res.json();
+                        processDetections(data);
+                    }
+                } catch (e) {
+                    console.error('Erro na detecção:', e);
+                }
+                
+            }, 500); // 2 FPS for server processing
+        }
+        
+        function processDetections(data) {
+            detectedFaces = data.detections || [];
+            document.getElementById('facesDetected').textContent = detectedFaces.length;
+            
+            drawDetections(detectedFaces);
+            updateOverlay(detectedFaces);
+            
+            // Check for unknown faces
+            const unknown = detectedFaces.find(d => d.user_id === null);
+            if (unknown && now - lastDetectionTime > 10000) {
+                lastDetectionTime = now;
+                showAlert('Pessoa não reconhecida detectada!');
+                if (soundEnabled) playAlertSound();
+            }
+        }
+        
+        function drawDetections(detections) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            detections.forEach(det => {
+                const isKnown = det.user_id !== null;
+                const color = isKnown ? '#10b981' : '#ef4444';
+                const label = `${det.user_name} ${Math.round(det.match_confidence * 100)}%`;
+                
+                // Box
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 4;
+                ctx.strokeRect(det.x, det.y, det.w, det.h);
+                
+                // Background for text
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(det.x, det.y > 30 ? det.y - 35 : det.y + det.h + 5, ctx.measureText(label).width + 20, 30);
+                
+                // Text
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 18px Inter, sans-serif';
+                ctx.fillText(label, det.x + 10, det.y > 30 ? det.y - 12 : det.y + det.h + 27);
+            });
+        }
+        
+        function updateOverlay(detections) {
+            const overlay = document.getElementById('detectionOverlay');
+            
+            if (detections.length === 0) {
+                overlay.innerHTML = '';
+                return;
+            }
+            
+            overlay.innerHTML = detections.map(det => {
+                const isKnown = det.user_id !== null;
+                return `
+                    <div class="detection-info ${isKnown ? 'known' : 'unknown'}">
+                        <div class="detection-name">${det.user_name}</div>
+                        <div class="detection-confidence">
+                            ${isKnown ? '👤 Reconhecido' : '❓ Desconhecido'} - 
+                            ${Math.round(det.match_confidence * 100)}% confiança
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function startPeriodicUpdates() {
+            // Load stats every 5 seconds
+            statsInterval = setInterval(loadStats, 5000);
+            
+            // Load presence every 3 seconds
+            presenceInterval = setInterval(loadPresence, 3000);
+            
+            // Load logs every 5 seconds
+            logsInterval = setInterval(loadLogs, 5000);
+            
+            // Initial load
+            loadStats();
+            loadPresence();
+            loadLogs();
+        }
+        
+        function stopPeriodicUpdates() {
+            if (statsInterval) clearInterval(statsInterval);
+            if (presenceInterval) clearInterval(presenceInterval);
+            if (logsInterval) clearInterval(logsInterval);
+        }
+        
+        async function loadStats() {
+            try {
+                const res = await apiCall('/api/stats');
+                const stats = await res.json();
+                
+                document.getElementById('presentCount').textContent = stats.present_today + ' Presentes';
+                document.getElementById('statTotalUsers').textContent = stats.total_users;
+                document.getElementById('statPresentToday').textContent = stats.present_today;
+                document.getElementById('statAccessToday').textContent = stats.access_today;
+                document.getElementById('statUnknown').textContent = stats.unknown_detections_today;
+            } catch (e) {
+                console.error('Erro ao carregar stats:', e);
+            }
+        }
+        
+        async function loadPresence() {
+            try {
+                const res = await apiCall('/api/presence/current');
+                const presence = await res.json();
+                
+                const list = document.getElementById('presenceList');
+                
+                if (presence.length === 0) {
+                    list.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: var(--text-light);">
+                            <i class="fas fa-users" style="font-size: 3em; opacity: 0.3; margin-bottom: 15px;"></i>
+                            <p>Nenhum usuário presente</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                list.innerHTML = presence.map(p => `
+                    <div class="presence-item">
+                        <div class="presence-avatar">${p.user.name.charAt(0).toUpperCase()}</div>
+                        <div class="presence-info">
+                            <div class="presence-name">${p.user.name}</div>
+                            <div class="presence-time">
+                                ${p.status === 'presente' ? 'Entrada: ' + (p.check_in ? new Date(p.check_in).toLocaleTimeString('pt-BR') : '--:--') : 'Ausente'}
+                            </div>
+                        </div>
+                        <div class="presence-status ${p.status === 'presente' ? 'present' : 'absent'}"></div>
+                    </div>
+                `).join('');
+                
+            } catch (e) {
+                console.error('Erro ao carregar presença:', e);
+            }
+        }
+        
+        async function loadLogs() {
+            try {
+                const res = await apiCall('/api/access-logs?limit=20');
+                const logs = await res.json();
+                
+                // Main logs tab
+                const logList = document.getElementById('logList');
+                logList.innerHTML = logs.map(l => {
+                    let type = 'default';
+                    if (l.action === 'recognition' || l.action === 'register') type = 'success';
+                    if (l.action === 'unknown_detected') type = 'danger';
+                    if (l.status === 'blocked') type = 'warning';
+                    
+                    return `
+                        <div class="log-item ${type}">
+                            <div class="log-header">
+                                <span class="log-user">${l.user_name || 'Sistema'}</span>
+                                <span class="log-time">${new Date(l.created_at).toLocaleTimeString('pt-BR')}</span>
+                            </div>
+                            <div class="log-action">${formatAction(l.action)}</div>
+                        </div>
+                    `;
+                }).join('');
+                
+                // Mini logs for stats tab
+                const miniLogs = document.getElementById('miniAccessLogs');
+                miniLogs.innerHTML = logs.slice(0, 5).map(l => `
+                    <div class="log-item ${l.action === 'unknown_detected' ? 'danger' : 'success'}" style="padding: 8px 12px;">
+                        <span style="font-size: 0.85em;">
+                            ${l.user_name || '?'} - ${formatAction(l.action)}
+                        </span>
+                        <span style="color: var(--text-light); font-size: 0.8em; float: right;">
+                            ${new Date(l.created_at).toLocaleTimeString('pt-BR')}
+                        </span>
+                    </div>
+                `).join('');
+                
+            } catch (e) {
+                console.error('Erro ao carregar logs:', e);
+            }
+        }
+        
+        function formatAction(action) {
+            const actions = {
+                'recognition': 'Reconhecimento facial',
+                'register': 'Cadastro realizado',
+                'unknown_detected': 'Pessoa desconhecida',
+                'manual_door_open': 'Porta aberta manualmente',
+                'login': 'Login no sistema',
+                'user_created': 'Usuário criado'
+            };
+            return actions[action] || action;
+        }
+        
+        function switchTab(tab, el) {
+            document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            
+            document.getElementById('presenceTab').style.display = tab === 'presence' ? 'block' : 'none';
+            document.getElementById('logsTab').style.display = tab === 'logs' ? 'block' : 'none';
+            document.getElementById('statsTab').style.display = tab === 'stats' ? 'block' : 'none';
+        }
+        
+        function showAlert(message) {
+            const popup = document.getElementById('alertPopup');
+            document.getElementById('alertMessage').textContent = message;
+            popup.classList.add('show');
+            
+            setTimeout(() => {
+                popup.classList.remove('show');
+            }, 5000);
+        }
+        
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        function selectCamera(camera, btn) {
+            document.querySelectorAll('.camera-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentCamera = camera;
+            showToast('Câmera selecionada: ' + camera);
+        }
+        
+        async function manualOpenDoor() {
+            if (!confirm('Deseja abrir a porta manualmente?')) return;
+            
+            try {
+                const res = await apiCall('/api/hardware/open-door', { method: 'POST' });
+                if (res.ok) {
+                    showToast('Porta aberta com sucesso!');
+                }
+            } catch (e) {
+                showToast('Erro ao abrir porta');
+            }
+        }
+        
+        function takeSnapshot() {
+            if (!stream) {
+                showToast('Câmera não está ativa');
+                return;
+            }
+            
+            const snapshotCanvas = document.createElement('canvas');
+            snapshotCanvas.width = video.videoWidth;
+            snapshotCanvas.height = video.videoHeight;
+            const snapCtx = snapshotCanvas.getContext('2d');
+            snapCtx.drawImage(video, 0, 0);
+            
+            // Draw detections on snapshot
+            snapCtx.drawImage(canvas, 0, 0);
+            
+            const link = document.createElement('a');
+            link.download = 'snapshot_' + new Date().toISOString().replace(/:/g, '-') + '.jpg';
+            link.href = snapshotCanvas.toDataURL('image/jpeg', 0.9);
+            link.click();
+            
+            showToast('Captura salva!');
+        }
+        
+        let alertAudio = null;
+        function playSound() {
+            soundEnabled = !soundEnabled;
+            showToast(soundEnabled ? 'Som ativado' : 'Som desativado');
+        }
+        
+        function playAlertSound() {
+            if (!soundEnabled) return;
+            
+            // Create simple beep using Web Audio API
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = 800;
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+            } catch (e) {
+                console.log('Audio not supported');
+            }
+        }
+        
+        function goToDashboard() {
+            window.location.href = '/dashboard';
+        }
+        
+        // Update CPU simulation (in real app would use actual metrics)
+        setInterval(() => {
+            const cpu = Math.floor(Math.random() * 30) + 10;
+            document.getElementById('cpuUsage').textContent = cpu;
+        }, 2000);
+        
+        // Keep screen awake
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {
+                console.log('Wake Lock not supported');
+            }
+        }
+        
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && isMonitoring) {
+                requestWakeLock();
+            }
+        });
+        
+        // Start wake lock
+        requestWakeLock();
+    </script>
+</body>
+</html>
