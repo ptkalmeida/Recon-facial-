@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -971,9 +971,9 @@
             }
         }
         
-        // ========== CÃ‚MERA DE CAPTURA DE FOTOS ==========
+        // ========== CÂMERA DE CAPTURA DE FOTOS ==========
         let captureStream = null;
-        let capturedPhotos = []; // Array de objetos: { id, blob, previewUrl }
+        let capturedImagesArray = []; // Array de objetos: { id, blob, previewUrl }
         let photoSequence = 0;
 
         function stopStreamTracks(streamRef) {
@@ -1081,13 +1081,13 @@
             canvas.toBlob((blob) => {
                 if (blob) {
                     const previewUrl = URL.createObjectURL(blob);
-                    capturedPhotos.push({
+                    capturedImagesArray.push({
                         id: ++photoSequence,
                         blob: blob,
                         previewUrl: previewUrl
                     });
                     updateCapturedPhotosUI();
-                    showToast('Foto capturada! (' + capturedPhotos.length + ')');
+                    showToast('Foto capturada! (' + capturedImagesArray.length + ')');
                 } else {
                     showToast('Erro ao gerar imagem');
                 }
@@ -1099,19 +1099,22 @@
             const countSpan = document.getElementById('photoCount');
             const noPhotosMsg = document.getElementById('noPhotosMsg');
             
-            countSpan.textContent = String(capturedPhotos.length);
+            if (!container || !countSpan) return;
+
+            const count = capturedImagesArray.length;
+            countSpan.textContent = String(count);
             
-            if (capturedPhotos.length === 0) {
-                noPhotosMsg.style.display = 'block';
+            if (count === 0) {
+                if (noPhotosMsg) noPhotosMsg.style.display = 'block';
                 container.innerHTML = '';
-                container.appendChild(noPhotosMsg);
+                if (noPhotosMsg) container.appendChild(noPhotosMsg);
                 return;
             }
             
-            noPhotosMsg.style.display = 'none';
+            if (noPhotosMsg) noPhotosMsg.style.display = 'none';
             container.innerHTML = '';
             
-            capturedPhotos.forEach((photo, index) => {
+            capturedImagesArray.forEach((photo, index) => {
                 const div = document.createElement('div');
                 div.style.cssText = 'position: relative; width: 92px; height: 92px; flex: 0 0 auto;';
                 
@@ -1122,6 +1125,7 @@
                 const deleteBtn = document.createElement('button');
                 deleteBtn.innerHTML = '&times;';
                 deleteBtn.style.cssText = 'position: absolute; top: -8px; right: -8px; background: red; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px;';
+                deleteBtn.type = 'button';
                 deleteBtn.onclick = function() { removePhoto(index); };
                 
                 div.appendChild(img);
@@ -1131,7 +1135,7 @@
         }
         
         function removePhoto(index) {
-            const removed = capturedPhotos.splice(index, 1);
+            const removed = capturedImagesArray.splice(index, 1);
             if (removed.length && removed[0].previewUrl) {
                 URL.revokeObjectURL(removed[0].previewUrl);
             }
@@ -1141,10 +1145,12 @@
         
         function closeRegisterModal() {
             stopCaptureCamera();
-            capturedPhotos.forEach((photo) => {
-                if (photo.previewUrl) URL.revokeObjectURL(photo.previewUrl);
-            });
-            capturedPhotos = [];
+            if (typeof capturedImagesArray !== 'undefined') {
+                capturedImagesArray.forEach((photo) => {
+                    if (photo.previewUrl) URL.revokeObjectURL(photo.previewUrl);
+                });
+                capturedImagesArray = [];
+            }
             updateCapturedPhotosUI();
             document.getElementById('newUserName').value = '';
             document.getElementById('newUserEmail').value = '';
@@ -1156,26 +1162,30 @@
         async function registerUser(event) {
             event.preventDefault();
             
+            const submitBtn = event.target.querySelector('button[type="submit"]');
+            const originalBtnText = submitBtn.innerHTML;
+            
             const name = document.getElementById('newUserName').value;
             const email = document.getElementById('newUserEmail').value;
             const uploadedImages = document.getElementById('newUserImages').files;
             
-            // Usar fotos capturadas ou upload
-            if (capturedPhotos.length === 0 && uploadedImages.length === 0) {
+            if (capturedImagesArray.length === 0 && uploadedImages.length === 0) {
                 showToast('Capture ou selecione pelo menos uma foto');
                 return;
             }
+            
+            // Iniciar loading
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cadastrando...';
             
             const formData = new FormData();
             formData.append('name', name);
             if (email) formData.append('email', email);
             
-            // Adicionar fotos capturadas
-            for (let i = 0; i < capturedPhotos.length; i++) {
-                formData.append('images', capturedPhotos[i].blob, 'capture_' + i + '.jpg');
+            for (let i = 0; i < capturedImagesArray.length; i++) {
+                formData.append('images', capturedImagesArray[i].blob, 'capture_' + i + '.jpg');
             }
             
-            // Adicionar fotos do upload
             for (let i = 0; i < uploadedImages.length; i++) {
                 formData.append('images', uploadedImages[i]);
             }
@@ -1189,12 +1199,24 @@
                 if (res.ok) {
                     showToast('Usuário cadastrado com sucesso!');
                     closeRegisterModal();
+                    if (typeof loadUsers === 'function') loadUsers();
+                    if (typeof loadStats === 'function') loadStats();
                 } else {
-                    const error = await res.json();
-                    showToast('Erro: ' + (error.detail || 'Erro ao cadastrar'));
+                    let errorMsg = 'Erro ao cadastrar';
+                    try {
+                        const errorData = await res.json();
+                        errorMsg = errorData.detail || errorMsg;
+                    } catch (parseError) {
+                        errorMsg = 'Erro no servidor (' + res.status + ')';
+                    }
+                    showToast('Erro: ' + errorMsg);
                 }
             } catch (e) {
-                showToast('Erro ao cadastrar Usuário');
+                console.error('Registration error:', e);
+                showToast('Erro de conexão ou erro interno');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
             }
         }
         

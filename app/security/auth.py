@@ -5,6 +5,12 @@ from typing import Optional, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import logging
+import threading
+import bcrypt
+from pathlib import Path
+
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +38,23 @@ MAX_PASSWORD_LENGTH = 72  # bcrypt limit
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password with bcrypt (truncated to 72 bytes)."""
-    # Truncate password to bcrypt's maximum length
-    truncated = plain_password.encode('utf-8')[:MAX_PASSWORD_LENGTH].decode('utf-8', errors='ignore')
-    return pwd_context.verify(truncated, hashed_password)
+    try:
+        # Use raw bcrypt to avoid passlib compatibility issues with bcrypt 5.0.0+
+        password_bytes = plain_password.encode('utf-8')[:MAX_PASSWORD_LENGTH]
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception as e:
+        logger.error(f"Erro na verificação de senha: {e}")
+        return False
 
 
 def get_password_hash(password: str) -> str:
     """Hash password with bcrypt (truncated to 72 bytes)."""
-    # Truncate password to bcrypt's maximum length
-    truncated = password.encode('utf-8')[:MAX_PASSWORD_LENGTH].decode('utf-8', errors='ignore')
-    return pwd_context.hash(truncated)
+    # Use raw bcrypt to avoid passlib compatibility issues with bcrypt 5.0.0+
+    password_bytes = password.encode('utf-8')[:MAX_PASSWORD_LENGTH]
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
@@ -113,16 +126,6 @@ class SimpleAuthManager:
         self._ensure_auth_file()
         
     def _ensure_auth_file(self):
-            current_password = settings.admin_password
-            if not current_password:
-                raise RuntimeError(
-                    "ADMIN_PASSWORD must be set before creating the admin auth file"
-                )
-            default_data = {
-                "username": ADMIN_USERNAME,
-                "password_hash": get_password_hash(current_password),
-                "created_at": datetime.now().isoformat()
-            }
         with self._lock:
             if self._initialized:
                 return

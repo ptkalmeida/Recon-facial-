@@ -181,6 +181,9 @@ class DatabaseManager:
             expire_on_commit=False
         )
 
+    def get_session(self):
+        return self.SessionLocal()
+
     @contextmanager
     def session(self):
         """Provide a transactional scope around a series of operations."""
@@ -334,83 +337,84 @@ class DatabaseManager:
 
     def get_dashboard_stats(self) -> Dict[str, int]:
         """Get optimized system statistics using SQL aggregates."""
-        session = self.get_session()
-        try:
-            from sqlalchemy import func
-            today = datetime.now().date()
-            
-            total_users = session.query(func.count(User.id)).scalar()
-            active_users = session.query(func.count(User.id)).filter(User.is_active == True).scalar()
-            
-            # Count access logs today
-            access_today = session.query(func.count(AccessLog.id)).filter(
-                func.date(AccessLog.created_at) == today
-            ).scalar()
-            
-            # Count unknown detections today
-            unknown_today = session.query(func.count(AccessLog.id)).filter(
-                func.date(AccessLog.created_at) == today,
-                AccessLog.action == "unknown_detected"
-            ).scalar()
-            
-            # Count people currently present (optimized)
-            # This is slightly more complex as it depends on the latest record
-            # We'll use a simpler approximation here: count unique users who entered today and didn't leave
-            # For exact "present_today" from the dashboard's perspective:
-            current_presence = self.get_current_presence()
-            present_count = sum(1 for p in current_presence if p.get("status") == "presente")
-
-            return {
-                "total_users": total_users,
-                "active_users": active_users,
-                "access_today": access_today,
-                "unknown_today": unknown_today,
-                "present_today": present_count
-            }
-        finally:
-            session.close()
+        with self.session() as session:
+            try:
+                from sqlalchemy import func
+                today = datetime.now().date()
+                
+                total_users = session.query(func.count(User.id)).scalar()
+                active_users = session.query(func.count(User.id)).filter(User.is_active == True).scalar()
+                
+                # Count access logs today
+                access_today = session.query(func.count(AccessLog.id)).filter(
+                    func.date(AccessLog.created_at) == today
+                ).scalar()
+                
+                # Count unknown detections today
+                unknown_today = session.query(func.count(AccessLog.id)).filter(
+                    func.date(AccessLog.created_at) == today,
+                    AccessLog.action == "unknown_detected"
+                ).scalar()
+                
+                # Count people currently present (optimized)
+                # This is slightly more complex as it depends on the latest record
+                # We'll use a simpler approximation here: count unique users who entered today and didn't leave
+                # For exact "present_today" from the dashboard's perspective:
+                current_presence = self.get_current_presence()
+                present_count = sum(1 for p in current_presence if p.get("status") == "presente")
+    
+                return {
+                    "total_users": total_users,
+                    "active_users": active_users,
+                    "access_today": access_today,
+                    "unknown_today": unknown_today,
+                    "present_today": present_count
+                }
+            except Exception:
+                raise
 
     def get_current_presence(self) -> List[Dict[str, Any]]:
         """Optimized: Get current presence of all active users in ONE query."""
-        session = self.get_session()
-        try:
-            from sqlalchemy import func
-            
-            # Subquery to find the ID of the latest record per user
-            latest_id_subquery = session.query(
-                PresenceRecord.user_id,
-                func.max(PresenceRecord.id).label("max_id")
-            ).group_by(PresenceRecord.user_id).subquery()
-            
-            # Join users with their latest presence record
-            results = session.query(User, PresenceRecord).outerjoin(
-                latest_id_subquery, User.id == latest_id_subquery.c.user_id
-            ).outerjoin(
-                PresenceRecord, PresenceRecord.id == latest_id_subquery.c.max_id
-            ).filter(User.is_active == True).all()
-            
-            timeout = settings_dict.get("presence", {}).get("timeout_seconds", 60)
-            now = datetime.now()
-            processed_results = []
-            
-            for user, last_record in results:
-                status = "ausente"
-                check_in = None
+        with self.session() as session:
+            try:
+                from sqlalchemy import func
                 
-                if last_record and last_record.status == "entrada" and not last_record.check_out:
-                    if (now - last_record.created_at).total_seconds() < timeout:
-                        status = "presente"
-                        check_in = last_record.check_in.isoformat() if last_record.check_in else None
+                # Subquery to find the ID of the latest record per user
+                latest_id_subquery = session.query(
+                    PresenceRecord.user_id,
+                    func.max(PresenceRecord.id).label("max_id")
+                ).group_by(PresenceRecord.user_id).subquery()
                 
-                processed_results.append({
-                    "user": user.to_dict(),
-                    "status": status,
-                    "check_in": check_in
-                })
+                # Join users with their latest presence record
+                results = session.query(User, PresenceRecord).outerjoin(
+                    latest_id_subquery, User.id == latest_id_subquery.c.user_id
+                ).outerjoin(
+                    PresenceRecord, PresenceRecord.id == latest_id_subquery.c.max_id
+                ).filter(User.is_active == True).all()
                 
-            return processed_results
-        finally:
-            session.close()
+                timeout = settings_dict.get("presence", {}).get("timeout_seconds", 60)
+                now = datetime.now()
+                processed_results = []
+                
+                for user, last_record in results:
+                    status = "ausente"
+                    check_in = None
+                    
+                    if last_record and last_record.status == "entrada":
+                        if (now - last_record.created_at).total_seconds() < timeout:
+                            status = "presente"
+                            check_in = last_record.created_at.strftime("%H:%M:%S")
+                    
+                    processed_results.append({
+                        "user": user.to_dict(),
+                        "status": status,
+                        "check_in": check_in,
+                        "last_seen": last_record.created_at.isoformat() if last_record else None
+                    })
+                    
+                return processed_results
+            except Exception:
+                raise
 
 
 

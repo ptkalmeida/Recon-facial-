@@ -23,18 +23,22 @@ from app.security.rate_limiter import (
 )
 from app.utils.export import generate_excel_report, generate_pdf_report
 from app.services.hardware import door_manager
+from app.services.recognition_orchestrator import RecognitionOrchestrator, RecognitionAction
 from app.config import settings_dict
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+START_TIME = time.time()
 
 router = APIRouter()
 security = HTTPBearer()
-
 face_service = FaceRecognitionService(settings_dict)
-last_recognition_log: dict[int, datetime] = {}
-RECOGNITION_LOG_COOLDOWN_SECONDS = settings_dict.get("face_recognition", {}).get("log_cooldown_seconds", 5)
-multi_frame_confirmation: dict[int, dict] = {}
+orchestrator = RecognitionOrchestrator(
+    cooldown_seconds=settings_dict.get("face_recognition", {}).get("log_cooldown_seconds", 5),
+    min_frames=settings_dict.get("face_recognition", {}).get("confirmation_min_frames", 3),
+    window_seconds=settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
+)
 CONFIRMATION_WINDOW_SECONDS = settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
 CONFIRMATION_MIN_FRAMES = settings_dict.get("face_recognition", {}).get("confirmation_min_frames", 3)
 
@@ -43,25 +47,8 @@ def cleanup_internal_states():
     """Clean up expired entries from internal tracking dictionaries to prevent memory leaks."""
     now = datetime.now()
     
-    # 1. Cleanup last_recognition_log
-    # Remove entries older than 1 hour (much longer than cooldown to be safe)
-    expired_cooldown = now - timedelta(hours=1)
-    keys_to_remove = [k for k, v in last_recognition_log.items() if v < expired_cooldown]
-    for k in keys_to_remove:
-        del last_recognition_log[k]
-        
-    # 2. Cleanup multi_frame_confirmation
-    # Remove entries older than 2x confirmation window
-    keys_to_remove = []
-    for user_id, data in multi_frame_confirmation.items():
-        if "last_seen" in data:
-            if (now - data["last_seen"]).total_seconds() > (CONFIRMATION_WINDOW_SECONDS * 2):
-                keys_to_remove.append(user_id)
-    for k in keys_to_remove:
-        del multi_frame_confirmation[k]
-        
-    if keys_to_remove:
-        logger.debug(f"Cleaned up {len(keys_to_remove)} expired confirmation states")
+    # 1. Cleanup orchestrator
+    orchestrator.cleanup()
 
 
 
@@ -242,65 +229,72 @@ async def register_user_with_face(
     images: List[UploadFile] = File(...),
     current_user: dict = Depends(require_admin)
 ):
-    user = db_manager.get_user_by_name(name)
-    if user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="UsuÃ¡rio jÃ¡ existe"
-        )
-    
-    user = db_manager.create_user(name=name, email=email, role="user")
-    
-    embeddings = []
-    for img_file in images:
-        contents = await img_file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    try:
+        user = db_manager.get_user_by_name(name)
+        if user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Usuário já existe"
+            )
         
-        if img is None:
-            continue
+        user = db_manager.create_user(name=name, email=email, role="user")
+        
+        embeddings = []
+        for img_file in images:
+            contents = await img_file.read()
+            nparr = np.frombuffer(contents, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-        detections = face_service.detect_faces(img)
-        if not detections:
-            continue
-            
-        embedding = face_service.extract_embedding(img, detections[0])
-        if embedding is not None:
-            embeddings.append(embedding.tolist())
-    
-    if not embeddings:
-        db_manager.delete_user(user.id)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Nenhum rosto vÃ¡lido encontrado nas imagens"
+            if img is None:
+                continue
+                
+            detections = face_service.detect_faces(img)
+            if not detections:
+                continue
+                
+            embedding = face_service.extract_embedding(img, detections[0])
+            if embedding is not None:
+                embeddings.append(embedding.tolist())
+        
+        if not embeddings:
+            db_manager.delete_user(user.id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nenhum rosto válido encontrado nas imagens"
+            )
+        
+        avg_embedding = np.mean(embeddings, axis=0).tolist()
+        calibrated_threshold = face_service.calibrate_threshold([np.array(e, dtype=np.float32) for e in embeddings])
+        
+        db_manager.add_embedding(
+            user_id=user.id,
+            embedding_data=avg_embedding,
+            model_used=settings_dict.get("face_recognition", {}).get("model", "Facenet512"),
+            is_primary=True
         )
-    
-    avg_embedding = np.mean(embeddings, axis=0).tolist()
-    calibrated_threshold = face_service.calibrate_threshold([np.array(e, dtype=np.float32) for e in embeddings])
-    
-    db_manager.add_embedding(
-        user_id=user.id,
-        embedding_data=avg_embedding,
-        model_used=settings_dict.get("face_recognition", {}).get("model", "Facenet512"),
-        is_primary=True
-    )
-    
-    face_service.load_known_faces(db_manager.get_all_embeddings_data())
-    
-    db_manager.log_access(
-        user_id=user.id,
-        action="register",
-        status="success",
-        ip_address="system"
-    )
-    
-    response = {
-        "message": "UsuÃ¡rio registrado com sucesso",
-        "user": user.to_dict()
-    }
-    if calibrated_threshold is not None:
-        response["calibrated_threshold"] = calibrated_threshold
-    return response
+        
+        face_service.load_known_faces(db_manager.get_all_embeddings_data())
+        
+        db_manager.log_access(
+            user_id=user.id,
+            action="register",
+            status="success",
+            ip_address="system"
+        )
+        
+        response = {
+            "message": "Usuário registrado com sucesso",
+            "user": user.to_dict()
+        }
+        if calibrated_threshold is not None:
+            response["calibrated_threshold"] = calibrated_threshold
+        return response
+    except Exception as e:
+        logger.error(f"FATAL ERROR during registration: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno no servidor: {str(e)}"
+        )
 
 
 @router.get("/presence/current")
@@ -363,22 +357,12 @@ async def detect_faces(
     for detection in results.get("detections", []):
         if detection.get("user_id"):
             detected_user_id = detection["user_id"]
-            now = datetime.now()
-            bucket = multi_frame_confirmation.get(detected_user_id)
-            if bucket is None or (now - bucket["first_seen"]).total_seconds() > CONFIRMATION_WINDOW_SECONDS:
-                bucket = {"first_seen": now, "frames": 0}
-            bucket["frames"] += 1
-            multi_frame_confirmation[detected_user_id] = bucket
-
-            if bucket["frames"] < CONFIRMATION_MIN_FRAMES:
+            
+            actions = orchestrator.handle_recognition(detected_user_id, camera_id or "webcam")
+            if not actions:
                 continue
 
-            should_log = True
-            last_log_time = last_recognition_log.get(detected_user_id)
-            if last_log_time and (now - last_log_time).total_seconds() < RECOGNITION_LOG_COOLDOWN_SECONDS:
-                should_log = False
-
-            if should_log:
+            if RecognitionAction.LOG_ACCESS in actions:
                 db_manager.log_access(
                     user_id=detected_user_id,
                     action="recognition",
@@ -386,7 +370,6 @@ async def detect_faces(
                     camera_source=camera_id,
                     confidence=detection.get("match_confidence")
                 )
-                last_recognition_log[detected_user_id] = now
             
             current_presence = db_manager.get_current_presence()
             user_present = any(
@@ -508,5 +491,35 @@ async def manual_open_door(current_user: dict = Depends(get_current_user)):
 
 @router.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "Face Recognition Pro 2.0"}
+    db_status = "ok"
+    try:
+        from sqlalchemy import text
+        with db_manager.SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = "error"
+
+    status = "degraded" if db_status == "error" else "ok"
+    
+    orchestrator_metrics = {"cache_size": 0, "buckets_size": 0}
+    try:
+        orchestrator_metrics = orchestrator.get_metrics()
+    except Exception as e:
+        logger.error(f"Failed to fetch orchestrator metrics: {e}")
+        status = "degraded"
+
+    uptime = time.time() - START_TIME
+    active_provider = settings_dict.get("face_recognition", {}).get("model", "Facenet512")
+    version = settings_dict.get("version", "2.0.0")
+
+    return {
+        "status": status,
+        "service": "Face Recognition Pro 2.0",
+        "database": db_status,
+        "orchestrator": orchestrator_metrics,
+        "active_provider": active_provider,
+        "uptime_seconds": round(uptime, 2),
+        "version": version
+    }
 
