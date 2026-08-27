@@ -5,13 +5,23 @@ Provides security headers and request validation.
 """
 
 import logging
-from typing import Optional, Callable
+import secrets
+from collections.abc import Callable
+
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.config import settings, get_cors_origins
+from app.config import get_cors_origins, settings
 
 logger = logging.getLogger(__name__)
+
+# Paths under /api that already have their own dedicated rate limiter (login,
+# recognition) or must always stay reachable for monitoring (health).
+_GENERAL_RATE_LIMIT_EXCLUDED_PATHS = (
+    "/api/auth/login",
+    "/api/recognition/detect",
+    "/api/health",
+)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -29,25 +39,33 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Generated up front so HTML-rendering routes (main.py) can read
+        # request.state.csp_nonce and tag their <script> block with the same value.
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
+
         response = await call_next(request)
-        
+
         # Prevent MIME type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
-        
+
         # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
-        
+
         # XSS protection (legacy browsers)
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        
+
         # HSTS - only in production
         if settings.environment == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
-        
-        # Content Security Policy
+
+        # Content Security Policy. Scripts run only via this request's nonce -
+        # no 'unsafe-inline'/'unsafe-eval'. style-src keeps 'unsafe-inline' for now
+        # (inline style attributes are used throughout the templates; XSS risk via
+        # style is much lower than via script).
         csp = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
             "font-src 'self'; "
@@ -119,29 +137,36 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class CORSSecurityMiddleware(BaseHTTPMiddleware):
+class GeneralRateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Enhanced CORS middleware with strict validation.
-    
-    Unlike FastAPI's built-in CORS, this logs violations and
-    provides more control.
+    Enforce api_rate_limiter (settings.rate_limit_max_requests / _window_seconds)
+    on /api/* routes that don't already have a dedicated limiter.
+
+    /api/auth/login and /api/recognition/detect are excluded (protected by their
+    own stricter limiters in app/api/routes.py); /api/health is excluded so
+    monitoring can always reach it.
     """
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        origin = request.headers.get("origin")
-        
-        if origin:
-            allowed = settings.allowed_origins
-            
-            # Check if origin is allowed
-            is_allowed = any(
-                allowed_origin in origin or origin in allowed_origin
-                for allowed_origin in allowed
+        path = request.url.path
+        if path.startswith("/api/") and path not in _GENERAL_RATE_LIMIT_EXCLUDED_PATHS:
+            from app.security.rate_limiter import (
+                api_rate_limiter,
+                create_rate_limit_key,
+                get_client_ip,
             )
-            
-            if not is_allowed and settings.environment == "production":
-                logger.warning(f"CORS violation: origin '{origin}' not in allowed list")
-        
+
+            client_ip = get_client_ip(request)
+            rate_key = create_rate_limit_key("api", client_ip)
+            allowed, metadata = api_rate_limiter.is_allowed(rate_key)
+
+            if not allowed:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": f"Muitas requisições. Tente novamente em {metadata['retry_after']} segundos."}
+                )
+
         return await call_next(request)
 
 

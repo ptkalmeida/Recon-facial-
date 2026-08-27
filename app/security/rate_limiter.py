@@ -4,13 +4,10 @@ API Rate Limiting Module
 Provides rate limiting for API endpoints to prevent abuse and brute force attacks.
 """
 
-import time
-import threading
-from typing import Dict, Optional, Tuple
-from collections import defaultdict
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 import logging
+import threading
+import time
+from dataclasses import dataclass
 
 from app.config import settings
 
@@ -22,7 +19,7 @@ class RateLimitEntry:
     """Stores rate limit information for a client."""
     requests: int
     window_start: float
-    blocked_until: Optional[float] = None
+    blocked_until: float | None = None
 
 
 class RateLimiter:
@@ -46,14 +43,14 @@ class RateLimiter:
         self.block_duration = block_duration_seconds
         
         # Storage: {key: RateLimitEntry}
-        self._storage: Dict[str, RateLimitEntry] = {}
+        self._storage: dict[str, RateLimitEntry] = {}
         self._lock = threading.Lock()
         
         # Statistics
         self._blocked_count = 0
         self._allowed_count = 0
     
-    def is_allowed(self, key: str) -> Tuple[bool, Dict]:
+    def is_allowed(self, key: str) -> tuple[bool, dict]:
         """
         Check if a request is allowed for the given key.
         
@@ -163,7 +160,7 @@ class RateLimiter:
         
         return removed
     
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get rate limiter statistics."""
         with self._lock:
             return {
@@ -181,9 +178,9 @@ api_rate_limiter = RateLimiter()
 
 # Specialized rate limiters for different endpoints
 auth_rate_limiter = RateLimiter(
-    max_requests=5,  # 5 attempts
+    max_requests=settings.auth_max_attempts,
     window_seconds=300,  # per 5 minutes
-    block_duration_seconds=900  # 15 min block
+    block_duration_seconds=settings.auth_block_duration
 )
 
 recognition_rate_limiter = RateLimiter(
@@ -212,7 +209,7 @@ def get_client_ip(request) -> str:
     return "unknown"
 
 
-def create_rate_limit_key(endpoint: str, client_ip: str, user_id: Optional[str] = None) -> str:
+def create_rate_limit_key(endpoint: str, client_ip: str, user_id: str | None = None) -> str:
     """Create a unique key for rate limiting."""
     if user_id:
         return f"{endpoint}:user:{user_id}"

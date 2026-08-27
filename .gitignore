@@ -23,6 +23,9 @@ backup_*.zip
 .qwen/
 .agents/
 
+# Local-only code-quality tooling, unrelated to the app - kept on disk, not on GitHub
+skills/
+
 # IDE
 .vscode/
 

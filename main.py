@@ -1,6 +1,6 @@
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
 
 project_root = Path(__file__).parent
@@ -8,22 +8,24 @@ sys.path.insert(0, str(project_root))
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
-from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.config import settings, settings_dict, load_config, validate_security_settings
-from app.database.db import db_manager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
 from app.api import routes as api_routes
+from app.config import settings, settings_dict, validate_security_settings
+from app.database.db import db_manager
 from app.security.middleware import (
-    SecurityHeadersMiddleware,
+    GeneralRateLimitMiddleware,
     RequestValidationMiddleware,
-    get_secure_cors_options
+    SecurityHeadersMiddleware,
+    get_secure_cors_options,
 )
-from app.security.rate_limiter import api_rate_limiter, get_client_ip
+from app.security.rate_limiter import api_rate_limiter
 from app.services.camera_worker import CameraWorker, resolve_camera_source
 
 logging.basicConfig(
@@ -123,6 +125,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Request validation middleware
 app.add_middleware(RequestValidationMiddleware)
 
+# General API rate limiting (excludes routes with their own dedicated limiter)
+app.add_middleware(GeneralRateLimitMiddleware)
+
 # CORS middleware with secure configuration
 cors_options = get_secure_cors_options()
 app.add_middleware(
@@ -139,6 +144,20 @@ if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 templates = Jinja2Templates(directory=str(templates_path)) if templates_path.exists() else None
+
+
+def _render_html_with_nonce(filename: str, request: Request) -> HTMLResponse:
+    """Read a template file and tag its <script> tag with this request's CSP nonce.
+
+    Needed because these routes serve pre-rendered HTML files directly (not via
+    Jinja2Templates) and app/security/middleware.py's CSP only allows scripts that
+    carry the current request's nonce.
+    """
+    with open(templates_path / filename, "r", encoding="utf-8") as f:
+        html = f.read()
+    nonce = getattr(request.state, "csp_nonce", "")
+    html = html.replace("<script>", f'<script nonce="{nonce}">', 1)
+    return HTMLResponse(html)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -224,8 +243,7 @@ async def root(request: Request):
 async def monitor_page(request: Request):
     """Página de monitoramento 24/7"""
     if templates_path.exists():
-        with open(templates_path / "monitor.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
+        return _render_html_with_nonce("monitor.html", request)
     
     return """
     <!DOCTYPE html>
@@ -272,8 +290,7 @@ async def monitor_page(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     if templates_path.exists():
-        with open(templates_path / "dashboard.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
+        return _render_html_with_nonce("dashboard.html", request)
     
     return """
     <!DOCTYPE html>
@@ -588,8 +605,7 @@ async def dashboard(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if templates_path.exists():
-        with open(templates_path / "login.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
+        return _render_html_with_nonce("login.html", request)
     
     return """
     <!DOCTYPE html>
@@ -687,7 +703,7 @@ if __name__ == "__main__":
     port = server_config.get("port", 8000)
     reload = server_config.get("reload", True)
     
-    print("")
+    print()
     print("=" * 60)
     print("  FACE RECOGNITION PRO 3.0 - INICIANDO")
     print("=" * 60)
@@ -695,6 +711,6 @@ if __name__ == "__main__":
     print(f"  Dashboard: http://{host}:{port}/dashboard")
     print(f"  API Docs: http://{host}:{port}/docs")
     print("=" * 60)
-    print("")
+    print()
     
     uvicorn.run("main:app", host=host, port=port, reload=reload)

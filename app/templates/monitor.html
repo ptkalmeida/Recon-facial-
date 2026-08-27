@@ -494,13 +494,13 @@
         </div>
         
         <div class="header-actions">
-            <button class="btn btn-outline" onclick="toggleFullscreen()">
+            <button class="btn btn-outline" id="toggleFullscreenBtn">
                 <i class="fas fa-expand"></i> Tela Cheia
             </button>
-            <button class="btn btn-warning" onclick="manualOpenDoor()">
+            <button class="btn btn-warning" id="manualOpenDoorBtn">
                 <i class="fas fa-door-open"></i> Abrir Porta
             </button>
-            <button class="btn btn-outline" onclick="goToDashboard()">
+            <button class="btn btn-outline" id="goToDashboardBtn">
                 <i class="fas fa-cog"></i> Configurar
             </button>
         </div>
@@ -510,13 +510,13 @@
         <div class="video-section">
             <div class="camera-header">
                 <div class="camera-selector">
-                    <button class="camera-btn active" onclick="selectCamera('webcam', this)">
+                    <button class="camera-btn active" data-select-camera="webcam">
                         <i class="fas fa-camera"></i> Webcam
                     </button>
-                    <button class="camera-btn" onclick="selectCamera('ip1', this)">
+                    <button class="camera-btn" data-select-camera="ip1">
                         <i class="fas fa-video"></i> Câmera 1
                     </button>
-                    <button class="camera-btn" onclick="selectCamera('ip2', this)">
+                    <button class="camera-btn" data-select-camera="ip2">
                         <i class="fas fa-video"></i> Câmera 2
                     </button>
                 </div>
@@ -545,16 +545,16 @@
             </div>
             
             <div class="video-controls">
-                <button class="btn btn-success" id="startBtn" onclick="startMonitoring()">
+                <button class="btn btn-success" id="startBtn">
                     <i class="fas fa-play"></i> Iniciar Monitoramento
                 </button>
-                <button class="btn btn-danger" id="stopBtn" onclick="stopMonitoring()" style="display: none;">
+                <button class="btn btn-danger" id="stopBtn" style="display: none;">
                     <i class="fas fa-stop"></i> Parar
                 </button>
-                <button class="btn btn-outline" onclick="takeSnapshot()">
+                <button class="btn btn-outline" id="takeSnapshotBtn">
                     <i class="fas fa-camera"></i> Captura
                 </button>
-                <button class="btn btn-outline" onclick="playSound()">
+                <button class="btn btn-outline" id="playSoundBtn">
                     <i class="fas fa-volume-up"></i> Som
                 </button>
             </div>
@@ -562,13 +562,13 @@
         
         <div class="sidebar">
             <div class="sidebar-tabs">
-                <div class="sidebar-tab active" onclick="switchTab('presence', this)">
+                <div class="sidebar-tab active" data-switch-tab="presence">
                     <i class="fas fa-users"></i> Presença
                 </div>
-                <div class="sidebar-tab" onclick="switchTab('logs', this)">
+                <div class="sidebar-tab" data-switch-tab="logs">
                     <i class="fas fa-list"></i> Logs
                 </div>
-                <div class="sidebar-tab" onclick="switchTab('stats', this)">
+                <div class="sidebar-tab" data-switch-tab="stats">
                     <i class="fas fa-chart-line"></i> Stats
                 </div>
             </div>
@@ -1106,6 +1106,23 @@
         
         // Start wake lock
         requestWakeLock();
+
+        // Converted from inline onclick="" attributes to comply with a strict
+        // Content-Security-Policy (script-src has no 'unsafe-inline').
+        document.getElementById('toggleFullscreenBtn').addEventListener('click', () => toggleFullscreen());
+        document.getElementById('manualOpenDoorBtn').addEventListener('click', () => manualOpenDoor());
+        document.getElementById('goToDashboardBtn').addEventListener('click', () => goToDashboard());
+        document.getElementById('startBtn').addEventListener('click', () => startMonitoring());
+        document.getElementById('stopBtn').addEventListener('click', () => stopMonitoring());
+        document.getElementById('takeSnapshotBtn').addEventListener('click', () => takeSnapshot());
+        document.getElementById('playSoundBtn').addEventListener('click', () => playSound());
+
+        document.querySelectorAll('[data-select-camera]').forEach((btn) => {
+            btn.addEventListener('click', () => selectCamera(btn.dataset.selectCamera, btn));
+        });
+        document.querySelectorAll('[data-switch-tab]').forEach((tabEl) => {
+            tabEl.addEventListener('click', () => switchTab(tabEl.dataset.switchTab, tabEl));
+        });
     </script>
 </body>
 </html>

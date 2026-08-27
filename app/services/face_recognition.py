@@ -1,11 +1,11 @@
-import os
-import numpy as np
-import cv2
-import time
-import threading
-from typing import Optional, List, Dict, Any, Tuple
-from dataclasses import dataclass
 import logging
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any
+
+import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,21 @@ class FaceDetection:
     y: int
     w: int
     h: int
-    landmarks: Optional[Dict[str, Tuple[int, int]]] = None
+    landmarks: dict[str, tuple[int, int]] | None = None
+
+
+@dataclass
+class FaceQualityMetrics:
+    """Quality metrics for a detected face."""
+    sharpness: float  # Laplacian variance
+    brightness: float  # Mean pixel value
+    contrast: float  # Standard deviation
+    face_size_ratio: float  # Face area relative to image
+    is_good_quality: bool
 
 
 class FaceRecognitionService:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.fr_config = config.get("face_recognition", {})
         
@@ -74,12 +84,12 @@ class FaceRecognitionService:
         self._initialized = False
         self._lock = threading.Lock()
         
-        self._known_embeddings: Dict[int, np.ndarray] = {}
-        self._known_users: Dict[int, str] = {}
+        self._known_embeddings: dict[int, np.ndarray] = {}
+        self._known_users: dict[int, str] = {}
         self._insightface_app = None
         
         # Frame history per camera for liveness detection
-        self._frame_history: Dict[str, np.ndarray] = {}
+        self._frame_history: dict[str, np.ndarray] = {}
         
     def initialize(self) -> bool:
         global HAS_MEDIAPIPE
@@ -142,7 +152,7 @@ class FaceRecognitionService:
         logger.info("FaceRecognitionService using OpenCV Haar Cascade fallback")
         return True
     
-    def load_known_faces(self, embeddings_data: List[Dict[str, Any]]) -> bool:
+    def load_known_faces(self, embeddings_data: list[dict[str, Any]]) -> bool:
         try:
             with self._lock:
                 self._known_embeddings.clear()
@@ -169,7 +179,7 @@ class FaceRecognitionService:
             return embedding / norm
         return embedding
     
-    def detect_faces(self, frame: np.ndarray) -> List[FaceDetection]:
+    def detect_faces(self, frame: np.ndarray) -> list[FaceDetection]:
         """Detect faces using available backend (DeepFace priority)."""
         detections = []
 
@@ -276,24 +286,74 @@ class FaceRecognitionService:
         
         return detections
     
-    def extract_embedding(self, frame: np.ndarray, face_detection: FaceDetection) -> Optional[np.ndarray]:
-        """Extract face embedding using available backend (DeepFace priority)."""
+    def assess_face_quality(self, frame: np.ndarray, face_detection: FaceDetection) -> FaceQualityMetrics:
+        """Assess the quality of a detected face (sharpness, brightness, contrast, size)."""
         try:
             x, y, w, h = face_detection.x, face_detection.y, face_detection.w, face_detection.h
-            
+            x1, y1 = max(0, x), max(0, y)
+            x2, y2 = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+
+            face_crop = frame[y1:y2, x1:x2]
+            if face_crop.size == 0:
+                return FaceQualityMetrics(0, 0, 0, 0, False)
+
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            brightness = np.mean(gray)
+            contrast = np.std(gray)
+
+            img_area = frame.shape[0] * frame.shape[1]
+            face_area = w * h
+            size_ratio = face_area / img_area if img_area > 0 else 0
+
+            is_good = (
+                laplacian_var > 100 and  # Not too blurry
+                40 < brightness < 250 and  # Not too dark/bright
+                contrast > 20 and  # Some variation
+                size_ratio > 0.01  # Face is at least 1% of image
+            )
+
+            return FaceQualityMetrics(
+                sharpness=float(laplacian_var),
+                brightness=float(brightness),
+                contrast=float(contrast),
+                face_size_ratio=float(size_ratio),
+                is_good_quality=is_good
+            )
+        except Exception as e:
+            logger.error(f"Error assessing face quality: {e}")
+            return FaceQualityMetrics(0, 0, 0, 0, False)
+
+    def extract_embedding(self, frame: np.ndarray, face_detection: FaceDetection,
+                          skip_quality_check: bool = False) -> np.ndarray | None:
+        """Extract face embedding using available backend (DeepFace priority)."""
+        try:
+            if not skip_quality_check:
+                quality = self.assess_face_quality(frame, face_detection)
+                if not quality.is_good_quality:
+                    logger.info(
+                        f"Rosto descartado por qualidade insuficiente "
+                        f"(nitidez={quality.sharpness:.1f}, brilho={quality.brightness:.1f}, "
+                        f"contraste={quality.contrast:.1f}, tamanho={quality.face_size_ratio:.3f})"
+                    )
+                    return None
+
+            x, y, w, h = face_detection.x, face_detection.y, face_detection.w, face_detection.h
+
             padding_x = int(w * 0.1)
             padding_y = int(h * 0.1)
-            
+
             x1 = max(0, x - padding_x)
             y1 = max(0, y - padding_y)
             x2 = min(frame.shape[1], x + w + padding_x)
             y2 = min(frame.shape[0], y + h + padding_y)
-            
+
             face_crop = frame[y1:y2, x1:x2]
-            
+
             if face_crop.size == 0:
                 return None
-            
+
             # Priority 0: InsightFace
             if self._insightface_app is not None:
                 try:
@@ -338,7 +398,7 @@ class FaceRecognitionService:
             
         return None
     
-    def _extract_hog_features(self, face_crop: np.ndarray) -> Optional[np.ndarray]:
+    def _extract_hog_features(self, face_crop: np.ndarray) -> np.ndarray | None:
         """Extração de características espaciais (Grid-based Histogram) para maior precisão"""
         try:
             # Redimensionar para tamanho padrão
@@ -374,7 +434,7 @@ class FaceRecognitionService:
             logger.error(f"Erro ao extrair features espaciais: {e}")
             return None
     
-    def verify_face(self, embedding: np.ndarray) -> Tuple[Optional[int], float, str]:
+    def verify_face(self, embedding: np.ndarray) -> tuple[int | None, float, str]:
         """Verify face against known embeddings."""
         if not self._known_embeddings:
             return None, 0.0, "unknown"
@@ -421,7 +481,7 @@ class FaceRecognitionService:
         rejection_confidence = max(0.0, min(rejection_confidence, 1.0))
         return None, rejection_confidence, "unknown"
 
-    def calibrate_threshold(self, embeddings: List[np.ndarray]) -> Optional[float]:
+    def calibrate_threshold(self, embeddings: list[np.ndarray]) -> float | None:
         """Auto-calibrate threshold using intra-class distances from registration images.
         
         Returns the calibrated threshold value WITHOUT modifying the service's
@@ -430,7 +490,7 @@ class FaceRecognitionService:
         if len(embeddings) < 2:
             return None
         vectors = [self._normalize_embedding(np.array(e, dtype=np.float32)) for e in embeddings]
-        distances: List[float] = []
+        distances: list[float] = []
         for i in range(len(vectors)):
             for j in range(i + 1, len(vectors)):
                 distances.append(1.0 - float(np.dot(vectors[i], vectors[j])))
@@ -442,21 +502,27 @@ class FaceRecognitionService:
         return calibrated
     
     def check_liveness(self, frame: np.ndarray, face_detection: FaceDetection,
-                       camera_id: str = "default") -> Dict[str, Any]:
+                       camera_id: str = "default") -> dict[str, Any]:
         """Check if the face is live using frame-to-frame motion analysis.
-        
+
         Compares the current frame against the previous frame for this camera_id.
-        Real faces exhibit micro-movements; photos/videos show static or uniform motion.
-        
+        Real faces exhibit micro-movements; a perfectly static photo shows none.
+
+        Honest limitation: this is a simple pixel-difference heuristic, not a real
+        anti-spoofing model. A video or photo played back on a screen also produces
+        frame-to-frame differences (camera noise, screen glare, slight hand movement)
+        and can pass this check. Treat it only as a filter against trivial static
+        photos, not as protection against a deliberate presentation attack.
+
         Args:
             frame: Current BGR frame.
             face_detection: Detected face bounding box.
             camera_id: Camera identifier for per-camera frame history.
-            
+
         Returns:
             Dict with is_live, details.
         """
-        result = {"is_live": True, "blink_detected": False, "details": {}}
+        result = {"is_live": True, "details": {}}
         
         if not self.anti_spoofing_enabled:
             return result
@@ -479,9 +545,12 @@ class FaceRecognitionService:
                 
                 result["details"]["motion_score"] = motion_score
                 result["details"]["face_motion"] = face_motion
-                
-                # Real faces should have micro-movements
-                result["is_live"] = face_motion > 2.0 or motion_score > 5.0
+
+                # Requires motion specifically in the face region (not just anywhere
+                # in the frame, which whole-frame sensor noise can trigger on its
+                # own) above a stricter threshold than before - filters out a
+                # perfectly static photo, nothing more (see docstring above).
+                result["is_live"] = face_motion > 4.0
             
             # Store current frame for next comparison (per camera)
             self._frame_history[camera_id] = frame.copy()
@@ -491,7 +560,7 @@ class FaceRecognitionService:
             
         return result
     
-    def process_frame(self, frame: np.ndarray, camera_id: str = "default") -> Dict[str, Any]:
+    def process_frame(self, frame: np.ndarray, camera_id: str = "default") -> dict[str, Any]:
         start_time = time.time()
         
         detections = self.detect_faces(frame)
@@ -533,7 +602,7 @@ class FaceRecognitionService:
 
         return results
     
-    def register_face(self, image) -> Optional[np.ndarray]:
+    def register_face(self, image) -> np.ndarray | None:
         """Register a face from an image and return its embedding.
         
         Args:
@@ -622,7 +691,7 @@ class CameraCapture:
             if elapsed < frame_time:
                 time.sleep(frame_time - elapsed)
                 
-    def get_frame(self) -> Optional[np.ndarray]:
+    def get_frame(self) -> np.ndarray | None:
         with self.lock:
             return self.current_frame.copy() if self.current_frame is not None else None
             

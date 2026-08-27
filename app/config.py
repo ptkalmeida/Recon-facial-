@@ -1,11 +1,11 @@
 import os
-import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any
+
+import yaml
+from dotenv import load_dotenv
 from pydantic import Field, validator
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
-
 
 # Load .env file first
 env_path = Path(__file__).parent.parent / ".env"
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
         return v
 
 
-def load_yaml_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def load_yaml_config(config_path: str = "config.yaml") -> dict[str, Any]:
     """Load YAML configuration (non-sensitive settings only)."""
     config_file = Path(__file__).parent.parent / config_path
     if config_file.exists():
@@ -119,7 +119,7 @@ yaml_config = load_yaml_config()
 # Merge with environment variables (env vars take precedence)
 settings = Settings()
 
-def get_cors_origins() -> List[str]:
+def get_cors_origins() -> list[str]:
     """Parse CORS origins from comma-separated string."""
     origins = settings.allowed_origins
     if not origins:
@@ -185,13 +185,13 @@ settings_dict = {
 }
 
 
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = "config.yaml") -> dict[str, Any]:
     """Backward compatibility function."""
     return settings_dict
 
 
 # Validation helper
-def validate_security_settings() -> tuple[bool, List[str]]:
+def validate_security_settings() -> tuple[bool, list[str]]:
     """Validate that critical security settings are configured."""
     warnings = []
     
@@ -202,7 +202,14 @@ def validate_security_settings() -> tuple[bool, List[str]]:
     
     if not settings.admin_password:
         warnings.append("ADMIN_PASSWORD not set")
-    
+    else:
+        # Deferred import: app.security.auth imports `settings` from this module,
+        # so importing it at module load time here would create a circular import.
+        from app.security.auth import validate_password_strength
+        is_strong, error = validate_password_strength(settings.admin_password)
+        if not is_strong:
+            warnings.append(f"ADMIN_PASSWORD does not meet strength requirements: {error}")
+
     if settings.environment == "production":
         if settings.reload:
             warnings.append("Server reload enabled in production")

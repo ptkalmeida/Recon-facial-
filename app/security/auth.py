@@ -1,16 +1,14 @@
-import os
 import json
+import logging
+import os
+import threading
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Any
+
+import bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-import logging
-import threading
-import bcrypt
-from pathlib import Path
-
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,7 @@ def get_password_hash(password: str) -> str:
     return hashed.decode('utf-8')
 
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     
     if expires_delta:
@@ -71,7 +69,7 @@ def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta]
     return encoded_jwt
 
 
-def decode_token(token: str) -> Optional[Dict[str, Any]]:
+def decode_token(token: str) -> dict[str, Any] | None:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
@@ -80,7 +78,7 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
+def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     """Authenticate user with secure password verification."""
     if username == ADMIN_USERNAME and auth_manager.verify_password(password):
         return {
@@ -92,7 +90,7 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def validate_password_strength(password: str) -> tuple[bool, Optional[str]]:
+def validate_password_strength(password: str) -> tuple[bool, str | None]:
     """Validate password strength.
     
     Returns: (is_valid, error_message)
@@ -138,6 +136,19 @@ class SimpleAuthManager:
                     raise RuntimeError(
                         "ADMIN_PASSWORD must be set before creating the admin auth file"
                     )
+
+                is_strong, error = validate_password_strength(current_password)
+                if not is_strong:
+                    if settings.environment == "production":
+                        raise RuntimeError(
+                            f"ADMIN_PASSWORD does not meet strength requirements: {error}. "
+                            "Set a stronger ADMIN_PASSWORD before starting in production."
+                        )
+                    logger.warning(
+                        f"ADMIN_PASSWORD does not meet strength requirements: {error} "
+                        "(allowed outside production, but change it before deploying)"
+                    )
+
                 default_data = {
                     "username": ADMIN_USERNAME,
                     "password_hash": get_password_hash(current_password),
@@ -188,7 +199,7 @@ class SimpleAuthManager:
                 logger.error(f"Erro ao verificar senha: {e}")
                 return False
             
-    def change_password(self, new_password: str) -> tuple[bool, Optional[str]]:
+    def change_password(self, new_password: str) -> tuple[bool, str | None]:
         """Change password with strength validation and thread-safe file access.
         
         Returns: (success, error_message)

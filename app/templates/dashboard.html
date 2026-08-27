@@ -326,22 +326,22 @@
             Face Recognition Pro
         </div>
         <div class="nav-menu">
-            <a href="#" class="nav-item active" onclick="showSection('dashboard')">
+            <a href="#" class="nav-item active" id="navDashboard">
                 <i class="fas fa-home"></i> Dashboard
             </a>
             <a href="/monitor" class="nav-item" target="_blank" style="background: rgba(16, 185, 129, 0.2); border: 1px solid var(--success);">
                 <i class="fas fa-eye"></i> Monitor 24/7
             </a>
-            <a href="#" class="nav-item" onclick="showSection('camera')">
+            <a href="#" class="nav-item" id="navCamera">
                 <i class="fas fa-video"></i> Câmera
             </a>
-            <a href="#" class="nav-item" onclick="showSection('users')">
+            <a href="#" class="nav-item" id="navUsers">
                 <i class="fas fa-users"></i> Usuários
             </a>
-            <a href="#" class="nav-item" onclick="showSection('reports')">
+            <a href="#" class="nav-item" id="navReports">
                 <i class="fas fa-chart-bar"></i> Relatórios
             </a>
-            <a href="#" class="nav-item" onclick="showSection('settings')">
+            <a href="#" class="nav-item" id="navSettings">
                 <i class="fas fa-cog"></i> Configurações
             </a>
         </div>
@@ -351,18 +351,18 @@
                 <div>Administrador</div>
                 <small>admin</small>
             </div>
-            <i class="fas fa-sign-out-alt" style="margin-left: auto; cursor: pointer;" onclick="logout()"></i>
+            <i class="fas fa-sign-out-alt" style="margin-left: auto; cursor: pointer;" id="logoutIcon"></i>
         </div>
     </div>
-    
+
     <div class="main-content">
         <div class="header">
             <h1 id="pageTitle">Dashboard</h1>
             <div class="header-actions">
-                <button class="btn btn-outline" onclick="refreshData()">
+                <button class="btn btn-outline" id="refreshBtn">
                     <i class="fas fa-sync-alt"></i> Atualizar
                 </button>
-                <button class="btn btn-primary" onclick="showModal('registerModal')">
+                <button class="btn btn-primary" id="newUserBtn">
                     <i class="fas fa-plus"></i> Novo Usuário
                 </button>
             </div>
@@ -447,16 +447,16 @@
                 <div class="section-header">
                     <h2 class="section-title">Câmera em Tempo Real</h2>
                     <div>
-                        <button class="btn btn-primary" onclick="startCamera()">
+                        <button class="btn btn-primary" id="cameraStartBtn">
                             <i class="fas fa-play"></i> Iniciar
                         </button>
-                        <button class="btn btn-outline" onclick="stopCamera()">
+                        <button class="btn btn-outline" id="cameraStopBtn">
                             <i class="fas fa-stop"></i> Parar
                         </button>
-                        <button class="btn" style="background: #ff9800; color: white;" onclick="manualOpenDoor()">
+                        <button class="btn" style="background: #ff9800; color: white;" id="manualOpenDoorBtn">
                             <i class="fas fa-door-open"></i> Abrir Porta Manual
                         </button>
-                        <button class="btn btn-outline" id="fullscreenBtn" onclick="toggleCameraFullscreen()">
+                        <button class="btn btn-outline" id="fullscreenBtn">
                             <i class="fas fa-expand"></i> Tela Cheia
                         </button>
                     </div>
@@ -522,7 +522,7 @@
                         <option value="pdf">PDF (.pdf)</option>
                     </select>
                 </div>
-                <button class="btn btn-primary" onclick="exportReport()">
+                <button class="btn btn-primary" id="exportReportBtn">
                     <i class="fas fa-download"></i> Exportar
                 </button>
             </div>
@@ -568,10 +568,10 @@
                 <div class="form-group">
                     <label>Capturar Fotos do Rosto</label>
                     <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                        <button type="button" class="btn btn-primary" id="startCameraBtn" onclick="startCaptureCamera()">
+                        <button type="button" class="btn btn-primary" id="startCameraBtn">
                             <i class="fas fa-camera"></i> Iniciar Câmera
                         </button>
-                        <button type="button" class="btn btn-danger" id="stopCameraBtn" onclick="stopCaptureCamera()" style="display: none;">
+                        <button type="button" class="btn btn-danger" id="stopCameraBtn" style="display: none;">
                             <i class="fas fa-stop"></i> Parar Câmera
                         </button>
                     </div>
@@ -584,7 +584,7 @@
                         </div>
                     </div>
                     <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 15px;">
-                        <button type="button" class="btn btn-success" id="captureBtn" onclick="takePhoto()" style="display: none;">
+                        <button type="button" class="btn btn-success" id="captureBtn" style="display: none;">
                             <i class="fas fa-dot-circle"></i> Capturar Foto
                         </button>
                     </div>
@@ -737,7 +737,7 @@
                         </td>
                         <td>${u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
                         <td>
-                            <button class="btn btn-outline" style="padding: 5px 10px;" onclick="deleteUser(${u.id})">
+                            <button class="btn btn-outline" style="padding: 5px 10px;" data-delete-user-id="${u.id}">
                                 <i class="fas fa-trash"></i>
                             </button>
                         </td>
@@ -752,8 +752,10 @@
         
         function showSection(section) {
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            event.target.closest('.nav-item').classList.add('active');
-            
+            const navId = 'nav' + section.charAt(0).toUpperCase() + section.slice(1);
+            const navEl = document.getElementById(navId);
+            if (navEl) navEl.classList.add('active');
+
             document.getElementById('dashboardSection').style.display = 'none';
             document.getElementById('cameraSection').style.display = 'none';
             document.getElementById('usersSection').style.display = 'none';
@@ -1286,6 +1288,32 @@
                     closeRegisterModal();
                 });
             }
+
+            // Converted from inline onclick="" attributes to comply with a strict
+            // Content-Security-Policy (script-src has no 'unsafe-inline').
+            document.getElementById('navDashboard').addEventListener('click', () => showSection('dashboard'));
+            document.getElementById('navCamera').addEventListener('click', () => showSection('camera'));
+            document.getElementById('navUsers').addEventListener('click', () => showSection('users'));
+            document.getElementById('navReports').addEventListener('click', () => showSection('reports'));
+            document.getElementById('navSettings').addEventListener('click', () => showSection('settings'));
+            document.getElementById('logoutIcon').addEventListener('click', () => logout());
+            document.getElementById('refreshBtn').addEventListener('click', () => refreshData());
+            document.getElementById('newUserBtn').addEventListener('click', () => showModal('registerModal'));
+            document.getElementById('cameraStartBtn').addEventListener('click', () => startCamera());
+            document.getElementById('cameraStopBtn').addEventListener('click', () => stopCamera());
+            document.getElementById('manualOpenDoorBtn').addEventListener('click', () => manualOpenDoor());
+            document.getElementById('fullscreenBtn').addEventListener('click', () => toggleCameraFullscreen());
+            document.getElementById('exportReportBtn').addEventListener('click', () => exportReport());
+            document.getElementById('startCameraBtn').addEventListener('click', () => startCaptureCamera());
+            document.getElementById('stopCameraBtn').addEventListener('click', () => stopCaptureCamera());
+            document.getElementById('captureBtn').addEventListener('click', () => takePhoto());
+
+            // Delegated listener for the dynamically-rendered "delete user" buttons
+            // (loadUsers() re-renders #usersTable's innerHTML on every refresh).
+            document.getElementById('usersTable').addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-delete-user-id]');
+                if (btn) deleteUser(parseInt(btn.dataset.deleteUserId, 10));
+            });
 
             loadStats();
             loadPresence();
