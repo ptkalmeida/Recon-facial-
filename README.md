@@ -1,4 +1,4 @@
-# Face Recognition Pro 2.0
+# Face Recognition Pro 3.0
 
 ## Sistema Profissional de Reconhecimento Facial
 
