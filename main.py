@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Inicializando Face Recognition Pro 2.0...")
+    logger.info("Inicializando Face Recognition Pro 3.0...")
     
     face_service = api_routes.face_service
     try:
@@ -111,7 +111,7 @@ if warnings:
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="Sistema Profissional de Reconhecimento Facial 2.0",
+    description="Sistema Profissional de Reconhecimento Facial 3.0",
     lifespan=lifespan,
     docs_url="/docs" if settings.environment != "production" else None,
     redoc_url="/redoc" if settings.environment != "production" else None
@@ -151,7 +151,7 @@ async def root(request: Request):
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Face Recognition Pro 2.0</title>
+        <title>Face Recognition Pro 3.0</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -204,7 +204,7 @@ async def root(request: Request):
     </head>
     <body>
         <div class="container">
-            <h1>🔐 Face Recognition Pro 2.0</h1>
+            <h1>🔐 Face Recognition Pro 3.0</h1>
             <p>Sistema profissional de reconhecimento facial com IA</p>
             <a href="/dashboard" class="btn">Acessar Dashboard</a>
             <div class="features">
@@ -231,7 +231,7 @@ async def monitor_page(request: Request):
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Monitoramento 24/7 - Face Recognition Pro 2.0</title>
+        <title>Monitoramento 24/7 - Face Recognition Pro 3.0</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -279,7 +279,7 @@ async def dashboard(request: Request):
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Dashboard - Face Recognition Pro 2.0</title>
+        <title>Dashboard - Face Recognition Pro 3.0</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -364,7 +364,7 @@ async def dashboard(request: Request):
     </head>
     <body>
         <div class="header">
-            <div class="logo">🔐 Face Recognition Pro 2.0</div>
+            <div class="logo">🔐 Face Recognition Pro 3.0</div>
             <div class="user-info">
                 <span>Admin</span>
                 <button class="btn" onclick="logout()">Sair</button>
@@ -595,7 +595,7 @@ async def login_page(request: Request):
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Login - Face Recognition Pro 2.0</title>
+        <title>Login - Face Recognition Pro 3.0</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -689,7 +689,7 @@ if __name__ == "__main__":
     
     print("")
     print("=" * 60)
-    print("  FACE RECOGNITION PRO 2.0 - INICIANDO")
+    print("  FACE RECOGNITION PRO 3.0 - INICIANDO")
     print("=" * 60)
     print(f"  Servidor: http://{host}:{port}")
     print(f"  Dashboard: http://{host}:{port}/dashboard")

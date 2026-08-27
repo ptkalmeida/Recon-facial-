@@ -1,231 +1,303 @@
-# Security Guide - Face Recognition Pro 2.0
+# Guia de Segurança - Face Recognition Pro 3.0
 
-## Overview
+## Visão Geral
 
-This document describes the security measures implemented in Face Recognition Pro 2.0 and provides guidance for secure deployment.
+Este documento descreve as medidas de segurança implementadas no Face Recognition Pro 3.0
+e orienta uma implantação segura. Ele foi revisado para refletir o que está **de fato**
+implementado no código — não apenas o que foi planejado — incluindo uma seção de
+[limitações conhecidas](#limitações-de-segurança-conhecidas) para itens que existem no
+código mas não funcionam como o nome sugere, ou que estão parcialmente implementados.
 
-## Security Features Implemented
+## Recursos de Segurança Implementados
 
-### 1. Secure Configuration Management
+### 1. Gerenciamento Seguro de Configuração
 
-**Problem Solved**: Hardcoded secrets in configuration files
+**Problema resolvido**: segredos hardcoded em arquivos de configuração.
 
-**Solution**:
-- All secrets moved to `.env` file (never commit this file!)
-- `config.yaml` contains only non-sensitive settings
-- Environment variables take precedence over file configuration
-- Automatic validation of security settings on startup
+**Solução**:
+- Todos os segredos ficam no arquivo `.env` (nunca commitar esse arquivo!).
+- `config.yaml` contém apenas configurações não sensíveis.
+- Variáveis de ambiente têm precedência sobre a configuração em arquivo.
+- Validação automática de configurações de segurança na inicialização.
 
-**Required Environment Variables**:
+**Variáveis de ambiente obrigatórias**:
+
 ```bash
-# Critical - Generate strong random values
-JWT_SECRET_KEY=<minimum-32-characters-random-string>
-ADMIN_PASSWORD=<strong-password-min-8-chars>
+# Críticas - gere valores aleatórios fortes
+JWT_SECRET_KEY=<string aleatória de no mínimo 32 caracteres>
+ADMIN_PASSWORD=<senha forte de no mínimo 8 caracteres>
 
-# Optional with defaults
+# Opcionais, com valores padrão
 ALLOWED_ORIGINS=http://localhost:8001
 RATE_LIMIT_MAX_REQUESTS=100
 ```
 
-**Email Alerts (optional)**: disabled by default (`ALERTS_ENABLED=false`). When enabled, an
-email is sent to `ALERT_EMAIL_TO` whenever an unknown face is detected, rate-limited per
-camera by `ALERT_COOLDOWN_SECONDS`. Requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
-`SMTP_PASSWORD` and `SMTP_FROM` to be set with a real SMTP account — never commit real SMTP
-credentials, keep them in `.env` only.
+**Alertas por e-mail (opcional)**: desabilitados por padrão (`ALERTS_ENABLED=false`). Quando
+habilitados, um e-mail é enviado para `ALERT_EMAIL_TO` sempre que um rosto desconhecido é
+detectado, com limite de repetição por câmera controlado por `ALERT_COOLDOWN_SECONDS`.
+Exige `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` e `SMTP_FROM` configurados com
+uma conta SMTP real — nunca commite credenciais SMTP reais, mantenha-as só no `.env`.
 
-### 2. Authentication & Authorization
+**Captura de câmera no servidor (opcional)**: desabilitada por padrão
+(`SERVER_CAMERA_ENABLED=false`). Quando habilitada, o servidor abre diretamente uma webcam
+local ou um stream RTSP/arquivo (`SERVER_CAMERA_SOURCE`) e roda reconhecimento contínuo,
+usando exatamente as mesmas regras de log/presença/alerta da rota HTTP. Como qualquer fonte
+de vídeo adicional, avalie o acesso físico/de rede a essa fonte antes de habilitar em
+produção — ver [docs/API.md](docs/API.md) para o contrato de `/api/health` quando ativa.
 
-**Features**:
-- JWT-based authentication with secure token generation
-- Password strength validation (min 8 chars, uppercase, lowercase, digit, special char)
-- Bcrypt password hashing (adaptive cost factor)
-- Rate limiting on authentication attempts (5 attempts per 15 minutes)
-- Automatic account lockout after failed attempts
+### 2. Autenticação e Autorização
 
-**Rate Limits**:
-| Endpoint | Limit | Window | Block Duration |
-|----------|-------|--------|----------------|
-| Login | 5 attempts | 5 minutes | 15 minutes |
-| Recognition | 60 requests | 1 minute | 1 minute |
-| General API | 100 requests | 1 minute | Varies |
+**Funcionalidades**:
+- Autenticação baseada em JWT com geração segura de token.
+- Validação de força de senha (mínimo 8 caracteres, maiúscula, minúscula, dígito e caractere
+  especial) — **aplicada na troca de senha** (`POST /api/auth/change-password`). A senha
+  admin inicial, definida via `ADMIN_PASSWORD` no `.env`, **não passa por essa validação**
+  no primeiro boot — garanta que ela já nasça forte.
+- Hash de senha com bcrypt (fator de custo adaptativo).
+- Limite de tentativas de autenticação (5 tentativas por 5 minutos, bloqueio de 15 minutos).
+- Bloqueio automático e temporário após tentativas falhas.
 
-### 3. API Security
+**Limites de requisição (rate limits)**:
 
-**Implemented Protections**:
-- Request size limiting (10MB default)
-- Rate limiting per endpoint
-- IP-based and user-based request tracking
-- Suspicious request pattern detection
+| Rota | Limite | Janela | Duração do bloqueio |
+|---|---|---|---|
+| Login | 5 tentativas | 5 minutos | 15 minutos |
+| Reconhecimento (`/api/recognition/detect`) | 60 requisições | 1 minuto | 1 minuto |
+| API geral | 100 requisições | 1 minuto | — |
 
-### 4. Security Headers
+> **Limitação conhecida**: os limites de login e reconhecimento acima estão implementados e
+> ativos, mas os valores estão fixos no código (`app/security/rate_limiter.py`) — as
+> variáveis `AUTH_MAX_ATTEMPTS`/`AUTH_BLOCK_DURATION` do `.env` existem e coincidem com os
+> defaults, mas não têm efeito real se alteradas. O limite de "API geral" (100/min) está
+> instanciado mas **não é aplicado a nenhuma rota** — hoje só é usado para uma limpeza
+> periódica de memória, não para bloquear requisições. Veja
+> [limitações conhecidas](#limitações-de-segurança-conhecidas).
 
-All responses include:
+### 3. Segurança de API
+
+**Proteções implementadas**:
+- Limite de tamanho de requisição (10MB por padrão).
+- Rate limiting por rota (ver ressalva acima sobre a API geral).
+- Rastreamento de requisições por IP e por usuário.
+
+### 4. Cabeçalhos de Segurança
+
+Todas as respostas incluem:
+
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 X-XSS-Protection: 1; mode=block
-Content-Security-Policy: default-src 'self'; ...
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
 Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: camera=(self), microphone=(), ...
-Strict-Transport-Security: max-age=31536000 (production only)
+Strict-Transport-Security: max-age=31536000 (apenas em produção)
 ```
 
-### 5. CORS Configuration
+> **Limitação conhecida**: o CSP acima permite `'unsafe-inline'` e `'unsafe-eval'` em
+> `script-src`, e `'unsafe-inline'` em `style-src`. Isso é necessário hoje porque o
+> dashboard usa JavaScript inline, mas reduz significativamente a proteção que uma CSP
+> normalmente oferece contra XSS — scripts injetados inline não seriam bloqueados por ela.
 
-**Before (Insecure)**:
+### 5. Configuração de CORS
+
+**Antes (inseguro)**:
 ```python
-allow_origins=["*"]  # Any origin can access
+allow_origins=["*"]  # qualquer origem pode acessar
 ```
 
-**After (Secure)**:
+**Depois (seguro)**:
 ```python
-# Only configured origins allowed
-# Controlled via ALLOWED_ORIGINS env var
-allow_origins=["http://localhost:8001", "https://yourdomain.com"]
+# Apenas as origens configuradas são permitidas
+# Controlado pela variável de ambiente ALLOWED_ORIGINS
+allow_origins=["http://localhost:8001", "https://seudominio.com"]
 ```
 
-### 6. Face Recognition Security
+### 6. Segurança do Reconhecimento Facial
 
-**Anti-Spoofing**:
-- Liveness detection via motion analysis
-- Frame difference analysis
-- Replay attack prevention
+**Anti-spoofing**:
+- Checagem de vivacidade por análise de movimento entre frames consecutivos da mesma
+  câmera (diferença de pixel).
 
-**Data Protection**:
-- Face embeddings stored in database (not raw images)
-- L2 normalization for consistent comparison
-- Quality validation before processing
+> **Limitação conhecida — importante**: essa checagem **não é** uma prevenção real de
+> replay attack. Ela apenas compara a diferença de pixels entre dois frames consecutivos
+> e considera "vivo" qualquer variação acima de um limiar baixo. Um vídeo ou foto exibido
+> na tela de um celular também produz diferenças de pixel entre frames (ruído da câmera,
+> reflexo, leve movimento) e pode facilmente passar nessa checagem. Não há detecção de
+> padrão de moiré de tela, análise de textura/frequência, nem estimativa de profundidade.
+> Trate esse recurso como uma redução de falsos positivos triviais (foto estática), não
+> como proteção contra um ataque de apresentação (presentation attack) planejado.
 
-## Deployment Checklist
+**Proteção de dados**:
+- Embeddings faciais são armazenados no banco (não as imagens originais) —
+  `app/api/routes.py`/`app/database/db.py` confirmam que nenhuma foto de cadastro é
+  gravada em disco, apenas o vetor numérico do rosto.
+- Normalização L2 para comparação consistente entre embeddings.
 
-### Production Deployment
+> **Limitação conhecida**: existe código de validação de qualidade de imagem (nitidez via
+> variância do Laplaciano, checagem de brilho) em `app/services/face_recognition_new.py`,
+> mas esse arquivo **não é usado** pelo serviço realmente carregado em produção
+> (`app/services/face_recognition.py`, importado por `app/api/routes.py`). Ou seja, hoje
+> não há validação de qualidade antes de extrair um embedding — qualquer imagem em que um
+> rosto seja detectado é processada, mesmo se borrada ou mal iluminada.
 
-1. **Copy and configure .env**:
+## Checklist de Implantação em Produção
+
+1. **Copie e configure o `.env`**:
    ```bash
    cp .env.example .env
-   # Edit .env with secure values
+   # Edite o .env com valores seguros
    ```
 
-2. **Generate secure secrets**:
+2. **Gere segredos seguros**:
    ```bash
-   # JWT Secret (minimum 32 characters)
+   # Chave JWT (mínimo 32 caracteres)
    openssl rand -base64 32
-   
-   # Encryption key
+
+   # Chave de criptografia
    openssl rand -base64 16
    ```
 
-3. **Configure environment**:
+3. **Configure o ambiente**:
    ```bash
    ENVIRONMENT=production
-   ALLOWED_ORIGINS=https://yourdomain.com
+   ALLOWED_ORIGINS=https://seudominio.com
    ```
 
-4. **Disable debug features**:
+4. **Desabilite recursos de debug**:
    ```bash
    RELOAD=false
    ```
 
-5. **Set strong admin password**:
-   - Minimum 8 characters
-   - Mix of uppercase, lowercase, numbers, and special characters
-   - Avoid dictionary words
+5. **Defina uma senha de admin forte** (mínimo 8 caracteres, maiúsculas, minúsculas,
+   números e caracteres especiais, sem palavras de dicionário) — lembre-se de que essa
+   senha inicial não é validada automaticamente pelo sistema (ver seção 2 acima).
 
-6. **Configure firewall**:
-   - Restrict access to necessary ports only
-   - Consider using a reverse proxy (nginx/traefik)
-   - Enable TLS/SSL
+6. **Configure o firewall**:
+   - Restrinja o acesso apenas às portas necessárias.
+   - Considere usar um proxy reverso (nginx/traefik).
+   - Habilite TLS/SSL.
 
-7. **Set up monitoring**:
-   - Enable logging to file
-   - Set up log rotation
-   - Monitor failed authentication attempts
+7. **Configure monitoramento**:
+   - Habilite log em arquivo.
+   - Configure rotação de logs.
+   - Monitore tentativas de autenticação falhas.
 
-## Security Best Practices
+## Boas Práticas de Segurança
 
-### Password Management
-- Change default admin password immediately after setup
-- Use password manager for strong, unique passwords
-- Rotate secrets periodically
-- Never commit `.env` file to version control
+### Gerenciamento de senhas
+- Troque a senha padrão de admin imediatamente após a configuração inicial.
+- Use um gerenciador de senhas para senhas fortes e únicas.
+- Rotacione segredos periodicamente.
+- Nunca commite o arquivo `.env` no controle de versão.
 
-### Network Security
-- Use HTTPS in production
-- Place behind reverse proxy with TLS termination
-- Restrict CORS to specific origins
-- Use VPN for administrative access if possible
+### Segurança de rede
+- Use HTTPS em produção.
+- Coloque o serviço atrás de um proxy reverso com terminação TLS.
+- Restrinja o CORS a origens específicas.
+- Use VPN para acesso administrativo quando possível.
 
-### Data Protection
-- Regular database backups
-- Encrypt backups at rest
-- Limit access to database files
-- Consider database encryption for sensitive deployments
+### Proteção de dados
+- Faça backups regulares do banco de dados.
+- Criptografe backups em repouso.
+- Limite o acesso aos arquivos de banco de dados.
+- Considere criptografia de banco para implantações sensíveis.
 
-### Monitoring
-- Review access logs regularly
-- Set up alerts for suspicious activity
-- Monitor rate limiting blocks
-- Check for unknown face detections
+### Monitoramento
+- Revise os logs de acesso regularmente.
+- Configure alertas para atividade suspeita.
+- Monitore bloqueios de rate limiting.
+- Acompanhe detecções de rostos desconhecidos.
 
-## Security Incident Response
+## Resposta a Incidentes de Segurança
 
-### If You Suspect a Breach
+### Se você suspeitar de uma violação
 
-1. **Immediately**:
-   - Change admin password
-   - Revoke all active sessions (restart server)
-   - Review access logs
+1. **Imediatamente**:
+   - Troque a senha de admin.
+   - Revogue todas as sessões ativas (reinicie o servidor).
+   - Revise os logs de acesso.
 
-2. **Investigate**:
-   - Check for unauthorized access attempts
-   - Review face recognition logs
-   - Verify user database integrity
+2. **Investigue**:
+   - Verifique tentativas de acesso não autorizado.
+   - Revise os logs de reconhecimento facial.
+   - Verifique a integridade do banco de usuários.
 
-3. **Recover**:
-   - Restore from clean backup if necessary
-   - Update all secrets
-   - Review and tighten security settings
+3. **Recupere**:
+   - Restaure a partir de um backup limpo, se necessário.
+   - Atualize todos os segredos.
+   - Revise e reforce as configurações de segurança.
 
-### Reporting Security Issues
+### Relatando vulnerabilidades de segurança
 
-If you discover a security vulnerability, please:
-1. Do not create a public issue
-2. Contact the maintainers directly
-3. Provide detailed reproduction steps
-4. Allow time for fix before disclosure
+Se você descobrir uma vulnerabilidade de segurança:
+1. Não crie uma issue pública.
+2. Contate os mantenedores diretamente.
+3. Forneça passos detalhados de reprodução.
+4. Aguarde a correção antes de divulgar publicamente.
 
-## Compliance Notes
+## Notas de Conformidade
 
-### GDPR / Privacy Considerations
-- Face embeddings are considered biometric data
-- Implement data retention policies
-- Provide mechanism for data deletion
-- Consider data processing agreements
+### LGPD / Considerações de privacidade
+- Embeddings faciais são considerados dados biométricos.
+- Implemente políticas de retenção de dados.
+- Forneça um mecanismo para exclusão de dados a pedido do titular.
+- Considere acordos de tratamento de dados quando aplicável.
 
-### Audit Trail
-All security-relevant events are logged:
-- Authentication attempts (success and failure)
-- Password changes
-- User registration/deletion
-- Unknown face detections
-- Access door operations
+### Trilha de auditoria
+Todos os eventos relevantes de segurança são registrados:
+- Tentativas de autenticação (sucesso e falha).
+- Alteração de senha.
+- Cadastro/remoção de usuários.
+- Detecções de rostos desconhecidos.
+- Operações de abertura de porta.
+
+## Limitações de Segurança Conhecidas
+
+Lista consolidada dos itens identificados em auditoria interna (2026-08-27) que existem no
+código mas não funcionam exatamente como a documentação anterior sugeria:
+
+1. `AUTH_MAX_ATTEMPTS`/`AUTH_BLOCK_DURATION` do `.env` não têm efeito — os valores do rate
+   limiter de login estão fixos no código.
+2. O rate limiter de "API geral" (100 req/min) não é aplicado a nenhuma rota — só roda
+   limpeza periódica de memória.
+3. CSP permite `'unsafe-inline'`/`'unsafe-eval'`, reduzindo a proteção contra XSS.
+4. A checagem de "vivacidade" é uma diferença de pixel simples, não uma prevenção real de
+   replay attack — ver seção 6.
+5. A validação de qualidade de imagem existe em um arquivo não utilizado pelo serviço real
+   (`face_recognition_new.py`), não no pipeline ativo.
+6. A validação de força de senha não se aplica à senha admin inicial definida via `.env`.
+
+Nenhum desses itens foi corrigido nesta revisão — o objetivo aqui foi deixar o documento
+fiel ao comportamento real do sistema. A correção de cada um é um trabalho separado.
 
 ## Changelog
 
-### Version 2.0 - Security Refactoring
-- [x] Removed hardcoded secrets from config files
-- [x] Implemented environment variable based configuration
-- [x] Added password strength requirements
-- [x] Implemented rate limiting on all critical endpoints
-- [x] Added security headers to all responses
-- [x] Restricted CORS configuration
-- [x] Unified face recognition algorithm (DeepFace Facenet512)
-- [x] Added face quality validation
-- [x] Implemented anti-spoofing detection
-- [x] Added request validation middleware
+### Versão 3.0
+- [x] Métricas de desempenho (`avg_detection_latency_ms`, `detection_fps`) em `/api/stats`.
+- [x] Feed de eventos ao vivo no dashboard (polling incremental via `after_id`).
+- [x] Alertas por e-mail em detecção de rosto desconhecido (opcional, desabilitado por
+      padrão).
+- [x] `/api/health` expõe o estado real do serviço de reconhecimento facial
+      (`model_ready`/`model_error`).
+- [x] Captura de câmera opcional do lado do servidor (webcam local ou RTSP/arquivo).
+- [x] Documento de segurança revisado para refletir o comportamento real do código (ver
+      seção de limitações conhecidas acima).
 
-## References
+### Versão 2.0 - Refatoração de Segurança
+- [x] Removidos segredos hardcoded dos arquivos de configuração.
+- [x] Configuração baseada em variáveis de ambiente.
+- [x] Requisitos de força de senha adicionados.
+- [x] Rate limiting implementado nas rotas críticas.
+- [x] Cabeçalhos de segurança adicionados a todas as respostas.
+- [x] Configuração de CORS restringida.
+- [x] Algoritmo de reconhecimento facial unificado (DeepFace Facenet512).
+- [x] Validação de qualidade de rosto adicionada (ver limitação nº 5 acima).
+- [x] Detecção de anti-spoofing implementada (ver limitação nº 4 acima).
+- [x] Middleware de validação de requisição adicionado.
+
+## Referências
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [FastAPI Security](https://fastapi.tiangolo.com/tutorial/security/)
-- [DeepFace Documentation](https://github.com/serengil/deepface)
+- [Segurança no FastAPI](https://fastapi.tiangolo.com/tutorial/security/)
+- [Documentação do DeepFace](https://github.com/serengil/deepface)

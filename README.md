@@ -1,4 +1,4 @@
-# Face Recognition Pro 2.0
+# Face Recognition Pro 3.0
 
 ## Sistema Profissional de Reconhecimento Facial
 
@@ -77,8 +77,8 @@ openssl rand -base64 32
 Para detalhes completos de segurança, consulte [SECURITY.md](SECURITY.md).
 
 ```yaml
-app_name: "Face Recognition Pro 2.0"
-version: "2.0.0"
+app_name: "Face Recognition Pro 3.0"
+version: "3.0.0"
 
 server:
   host: "0.0.0.0"

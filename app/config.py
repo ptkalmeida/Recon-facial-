@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     """Application settings with secure defaults."""
     
     # App Info
-    app_name: str = "Face Recognition Pro 2.0"
-    version: str = "2.0.0"
+    app_name: str = "Face Recognition Pro 3.0"
+    version: str = "3.0.0"
     environment: str = Field(default="development", pattern="^(development|production|testing)$")
     
     # Server

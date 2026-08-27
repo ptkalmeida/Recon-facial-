@@ -172,7 +172,7 @@ def list_registered_users():
 def main():
     print()
     print('=' * 60)
-    print('  🔐 CADASTRO DE PESSOAS - RECONHECIMENTO FACIAL PRO 2.0')
+    print('  🔐 CADASTRO DE PESSOAS - RECONHECIMENTO FACIAL PRO 3.0')
     print('=' * 60)
     print()
     

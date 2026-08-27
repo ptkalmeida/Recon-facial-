@@ -547,11 +547,11 @@ async def health_check():
 
     uptime = time.time() - START_TIME
     active_provider = settings_dict.get("face_recognition", {}).get("model", "Facenet512")
-    version = settings_dict.get("version", "2.0.0")
+    version = settings_dict.get("version", "3.0.0")
 
     health_payload = {
         "status": status,
-        "service": "Face Recognition Pro 2.0",
+        "service": "Face Recognition Pro 3.0",
         "database": db_status,
         "orchestrator": orchestrator_metrics,
         "active_provider": active_provider,

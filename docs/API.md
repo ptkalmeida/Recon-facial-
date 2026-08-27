@@ -103,14 +103,14 @@ Pública. Resposta `200`:
 ```json
 {
   "status": "ok",
-  "service": "Face Recognition Pro 2.0",
+  "service": "Face Recognition Pro 3.0",
   "database": "ok",
   "orchestrator": {"cache_size": 0, "buckets_size": 0},
   "active_provider": "Facenet512",
   "model_ready": true,
   "model_error": null,
   "uptime_seconds": 12.3,
-  "version": "2.0.0"
+  "version": "3.0.0"
 }
 ```
 

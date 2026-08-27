@@ -1,12 +1,12 @@
 # ==========================================
-# Face Recognition Pro 2.0 - Configuration
+# Face Recognition Pro 3.0 - Configuration
 # ==========================================
 # WARNING: Do NOT store secrets in this file!
 # All sensitive values must be set in .env file
 # See .env.example for reference
 
-app_name: "Face Recognition Pro 2.0"
-version: "2.0.0"
+app_name: "Face Recognition Pro 3.0"
+version: "3.0.0"
 
 server:
   host: "0.0.0.0"
