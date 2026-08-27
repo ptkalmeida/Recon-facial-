@@ -206,6 +206,9 @@ requirements.txt - Dependências
 
 ## APIs Disponíveis
 
+Contrato completo, exemplos de request/response e estados do `/api/health` em
+[docs/API.md](docs/API.md).
+
 ### Autenticação
 - `POST /api/auth/login` - Login
 - `POST /api/auth/change-password` - Alterar senha

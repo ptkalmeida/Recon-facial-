@@ -24,6 +24,7 @@ from app.security.middleware import (
     get_secure_cors_options
 )
 from app.security.rate_limiter import api_rate_limiter, get_client_ip
+from app.services.camera_worker import CameraWorker, resolve_camera_source
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,12 +37,21 @@ async def lifespan(app: FastAPI):
     logger.info("Inicializando Face Recognition Pro 2.0...")
     
     face_service = api_routes.face_service
-    if face_service.initialize():
-        embeddings_data = db_manager.get_all_embeddings_data()
-        face_service.load_known_faces(embeddings_data)
-        logger.info(f"Carregados {len(embeddings_data)} rostos conhecidos")
-    else:
-        logger.warning("FaceRecognitionService não pôde ser inicializado completamente")
+    try:
+        if face_service.initialize():
+            embeddings_data = db_manager.get_all_embeddings_data()
+            face_service.load_known_faces(embeddings_data)
+            logger.info(f"Carregados {len(embeddings_data)} rostos conhecidos")
+            api_routes.service_status["model_ready"] = True
+            api_routes.service_status["model_error"] = None
+        else:
+            logger.warning("FaceRecognitionService não pôde ser inicializado completamente")
+            api_routes.service_status["model_ready"] = False
+            api_routes.service_status["model_error"] = "Falha ao inicializar o serviço de reconhecimento facial"
+    except Exception as e:
+        logger.error(f"Erro ao inicializar FaceRecognitionService: {e}")
+        api_routes.service_status["model_ready"] = False
+        api_routes.service_status["model_error"] = str(e)
     
     logger.info("Sistema pronto!")
     
@@ -64,11 +74,32 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Erro na limpeza periÃ³dica: {e}")
 
     background_task = asyncio.create_task(cleanup_task())
-    
+
+    camera_worker = None
+    camera_settings = settings_dict.get("server_camera", {})
+    if camera_settings.get("enabled"):
+        source = resolve_camera_source(camera_settings.get("source", ""))
+        if source is None:
+            logger.warning("SERVER_CAMERA_ENABLED=true mas SERVER_CAMERA_SOURCE não configurado - captura no servidor desativada")
+        else:
+            camera_worker = CameraWorker(
+                source=source,
+                camera_id=camera_settings.get("camera_id", "server-cam"),
+                interval_seconds=camera_settings.get("interval_seconds", 1.0),
+                face_service=face_service,
+                performance_tracker=api_routes.performance_tracker,
+                handle_results_fn=api_routes.handle_detection_results
+            )
+            camera_worker.start()
+            api_routes.camera_worker = camera_worker
+            logger.info(f"Captura de câmera no servidor iniciada (fonte: {source})")
+
     yield
-    
+
     logger.info("Encerrando sistema...")
     background_task.cancel()
+    if camera_worker:
+        camera_worker.stop()
 
 
 # Validate security settings on startup

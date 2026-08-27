@@ -201,8 +201,8 @@ class DatabaseManager:
         with self.session() as session:
             user = User(name=name, email=email, role=role)
             session.add(user)
-            # Commit happens automatically via context manager
-            session.refresh(user)
+            # Flush to assign the primary key; commit happens automatically via context manager
+            session.flush()
             return user
 
     def get_user(self, user_id: int) -> Optional[User]:
@@ -227,7 +227,7 @@ class DatabaseManager:
                 for key, value in kwargs.items():
                     if hasattr(user, key):
                         setattr(user, key, value)
-                session.refresh(user)
+                session.flush()
             return user
 
     def delete_user(self, user_id: int) -> bool:
@@ -250,7 +250,7 @@ class DatabaseManager:
                 is_primary=is_primary
             )
             session.add(embedding)
-            session.refresh(embedding)
+            session.flush()
             return embedding
 
     def get_embeddings(self, user_id: int) -> List[Embedding]:
@@ -290,12 +290,13 @@ class DatabaseManager:
                 **kwargs
             )
             session.add(log)
-            session.refresh(log)
+            session.flush()
             return log
 
-    def get_access_logs(self, user_id: Optional[int] = None, 
+    def get_access_logs(self, user_id: Optional[int] = None,
                        start_date: Optional[datetime] = None,
                        end_date: Optional[datetime] = None,
+                       after_id: Optional[int] = None,
                        limit: int = 100) -> List[AccessLog]:
         with self.session() as session:
             query = session.query(AccessLog).options(joinedload(AccessLog.user))
@@ -305,6 +306,8 @@ class DatabaseManager:
                 query = query.filter(AccessLog.created_at >= start_date)
             if end_date:
                 query = query.filter(AccessLog.created_at <= end_date)
+            if after_id:
+                query = query.filter(AccessLog.id > after_id)
             return query.order_by(AccessLog.created_at.desc()).limit(limit).all()
 
     def log_presence(self, user_id: int, status: str, camera_source: Optional[str] = None) -> PresenceRecord:
@@ -319,7 +322,7 @@ class DatabaseManager:
             elif status == "saida":
                 record.check_out = datetime.now()
             session.add(record)
-            session.refresh(record)
+            session.flush()
             return record
 
     def get_presence_records(self, user_id: Optional[int] = None,

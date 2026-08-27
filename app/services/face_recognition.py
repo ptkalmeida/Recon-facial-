@@ -495,14 +495,13 @@ class FaceRecognitionService:
         start_time = time.time()
         
         detections = self.detect_faces(frame)
-        
+
         results = {
             "frame_id": int(time.time() * 1000),
             "faces_detected": len(detections),
             "detections": [],
-            "processing_time_ms": (time.time() - start_time) * 1000
         }
-        
+
         for detection in detections:
             embedding = self.extract_embedding(frame, detection)
             
@@ -529,7 +528,9 @@ class FaceRecognitionService:
             }
             
             results["detections"].append(result_entry)
-            
+
+        results["processing_time_ms"] = (time.time() - start_time) * 1000
+
         return results
     
     def register_face(self, image) -> Optional[np.ndarray]:

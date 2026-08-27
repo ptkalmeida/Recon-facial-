@@ -24,8 +24,11 @@ from app.security.rate_limiter import (
 from app.utils.export import generate_excel_report, generate_pdf_report
 from app.services.hardware import door_manager
 from app.services.recognition_orchestrator import RecognitionOrchestrator, RecognitionAction
+from app.services.performance_tracker import PerformanceTracker
+from app.services.notifications import EmailNotifier
 from app.config import settings_dict
 import logging
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,14 @@ orchestrator = RecognitionOrchestrator(
     min_frames=settings_dict.get("face_recognition", {}).get("confirmation_min_frames", 3),
     window_seconds=settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
 )
+performance_tracker = PerformanceTracker()
+email_notifier = EmailNotifier(settings_dict.get("alerts", {}))
+
+# Populated by main.py's lifespan startup once face_service.initialize() runs.
+service_status = {"model_ready": False, "model_error": None}
+
+# Set by main.py's lifespan startup when SERVER_CAMERA_ENABLED=true; stays None otherwise.
+camera_worker = None
 CONFIRMATION_WINDOW_SECONDS = settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
 CONFIRMATION_MIN_FRAMES = settings_dict.get("face_recognition", {}).get("confirmation_min_frames", 3)
 
@@ -315,11 +326,70 @@ async def get_presence_history(
 @router.get("/access-logs")
 async def get_access_logs(
     user_id: Optional[int] = None,
+    after_id: Optional[int] = None,
     limit: int = 100,
     current_user: dict = Depends(get_current_user)
 ):
-    logs = db_manager.get_access_logs(user_id=user_id, limit=limit)
+    logs = db_manager.get_access_logs(user_id=user_id, after_id=after_id, limit=limit)
     return [log.to_dict() for log in logs]
+
+
+def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
+    """Apply logging/presence/door/alert side effects for a batch of detections.
+
+    Shared by the /recognition/detect HTTP route and the optional server-side
+    camera worker (app/services/camera_worker.py), so both capture paths follow
+    the exact same security-relevant business rules.
+    """
+    for detection in results.get("detections", []):
+        if detection.get("user_id"):
+            detected_user_id = detection["user_id"]
+
+            actions = orchestrator.handle_recognition(detected_user_id, camera_id or "webcam")
+            if not actions:
+                continue
+
+            if RecognitionAction.LOG_ACCESS in actions:
+                db_manager.log_access(
+                    user_id=detected_user_id,
+                    action="recognition",
+                    status="success",
+                    camera_source=camera_id,
+                    confidence=detection.get("match_confidence")
+                )
+
+            current_presence = db_manager.get_current_presence()
+            user_present = any(
+                p.get("user", {}).get("id") == detection["user_id"] and p.get("status") == "presente"
+                for p in current_presence
+            )
+
+            if not user_present:
+                db_manager.log_presence(
+                    user_id=detection["user_id"],
+                    status="entrada",
+                    camera_source=camera_id
+                )
+
+            # --- INTEGRAÇÃO COM A PORTA ---
+            # Abre a porta se a confiança for maior que o definido (ex: 80%)
+            if detection.get("match_confidence", 0) > 0.8:
+                logger.info(f"Usuário {detection['user_name']} reconhecido. Abrindo porta...")
+                door_manager.open_door(duration=5)
+            # ------------------------------
+        else:
+            db_manager.log_access(
+                user_id=None,
+                action="unknown_detected",
+                status="unknown",
+                camera_source=camera_id,
+                confidence=detection.get("match_confidence")
+            )
+            threading.Thread(
+                target=email_notifier.notify_unknown_detected,
+                args=(camera_id, detection.get("match_confidence")),
+                daemon=True
+            ).start()
 
 
 @router.post("/recognition/detect")
@@ -335,83 +405,46 @@ async def detect_faces(
     user_id = current_user.get("id")
     rate_key = create_rate_limit_key("recognition", client_ip, str(user_id))
     allowed, metadata = recognition_rate_limiter.is_allowed(rate_key)
-    
+
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Muitas requisiÃ§Ãµes de reconhecimento. Tente novamente mais tarde."
         )
-    
+
     contents = await image.read()
     nparr = np.frombuffer(contents, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
+
     if frame is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Imagem invÃ¡lida"
         )
-    
-    results = face_service.process_frame(frame, camera_id or "webcam")
-    
-    for detection in results.get("detections", []):
-        if detection.get("user_id"):
-            detected_user_id = detection["user_id"]
-            
-            actions = orchestrator.handle_recognition(detected_user_id, camera_id or "webcam")
-            if not actions:
-                continue
 
-            if RecognitionAction.LOG_ACCESS in actions:
-                db_manager.log_access(
-                    user_id=detected_user_id,
-                    action="recognition",
-                    status="success",
-                    camera_source=camera_id,
-                    confidence=detection.get("match_confidence")
-                )
-            
-            current_presence = db_manager.get_current_presence()
-            user_present = any(
-                p.get("user", {}).get("id") == detection["user_id"] and p.get("status") == "presente"
-                for p in current_presence
-            )
-            
-            if not user_present:
-                db_manager.log_presence(
-                    user_id=detection["user_id"],
-                    status="entrada",
-                    camera_source=camera_id
-                )
-            
-            # --- INTEGRAÃ‡ÃƒO COM A PORTA ---
-            # Abre a porta se a confianÃ§a for maior que o definido (ex: 80%)
-            if detection.get("match_confidence", 0) > 0.8:
-                logger.info(f"UsuÃ¡rio {detection['user_name']} reconhecido. Abrindo porta...")
-                door_manager.open_door(duration=5)
-            # ------------------------------
-        else:
-            db_manager.log_access(
-                user_id=None,
-                action="unknown_detected",
-                status="unknown",
-                camera_source=camera_id,
-                confidence=detection.get("match_confidence")
-            )
-    
+    results = face_service.process_frame(frame, camera_id or "webcam")
+
+    if "processing_time_ms" in results:
+        performance_tracker.record(results["processing_time_ms"])
+
+    handle_detection_results(results, camera_id)
+
     return results
 
 
 @router.get("/stats")
 async def get_system_stats(current_user: dict = Depends(get_current_user)):
     stats = db_manager.get_dashboard_stats()
-    
+    perf = performance_tracker.get_metrics()
+
     return SystemStats(
         total_users=stats["total_users"],
         active_users=stats["active_users"],
         present_today=stats["present_today"],
         access_today=stats["access_today"],
-        unknown_detections_today=stats["unknown_today"]
+        unknown_detections_today=stats["unknown_today"],
+        avg_detection_latency_ms=perf["avg_detection_latency_ms"],
+        detection_fps=perf["detection_fps"]
     )
 
 
@@ -501,7 +534,7 @@ async def health_check():
         db_status = "error"
 
     status = "degraded" if db_status == "error" else "ok"
-    
+
     orchestrator_metrics = {"cache_size": 0, "buckets_size": 0}
     try:
         orchestrator_metrics = orchestrator.get_metrics()
@@ -509,17 +542,27 @@ async def health_check():
         logger.error(f"Failed to fetch orchestrator metrics: {e}")
         status = "degraded"
 
+    if not service_status["model_ready"]:
+        status = "degraded"
+
     uptime = time.time() - START_TIME
     active_provider = settings_dict.get("face_recognition", {}).get("model", "Facenet512")
     version = settings_dict.get("version", "2.0.0")
 
-    return {
+    health_payload = {
         "status": status,
         "service": "Face Recognition Pro 2.0",
         "database": db_status,
         "orchestrator": orchestrator_metrics,
         "active_provider": active_provider,
+        "model_ready": service_status["model_ready"],
+        "model_error": service_status["model_error"],
         "uptime_seconds": round(uptime, 2),
         "version": version
     }
+
+    if camera_worker is not None:
+        health_payload["server_camera"] = {"enabled": True, **camera_worker.get_status()}
+
+    return health_payload
 

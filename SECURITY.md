@@ -27,6 +27,12 @@ ALLOWED_ORIGINS=http://localhost:8001
 RATE_LIMIT_MAX_REQUESTS=100
 ```
 
+**Email Alerts (optional)**: disabled by default (`ALERTS_ENABLED=false`). When enabled, an
+email is sent to `ALERT_EMAIL_TO` whenever an unknown face is detected, rate-limited per
+camera by `ALERT_COOLDOWN_SECONDS`. Requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASSWORD` and `SMTP_FROM` to be set with a real SMTP account — never commit real SMTP
+credentials, keep them in `.env` only.
+
 ### 2. Authentication & Authorization
 
 **Features**:

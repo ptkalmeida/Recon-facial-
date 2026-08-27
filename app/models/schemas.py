@@ -95,6 +95,8 @@ class SystemStats(BaseModel):
     present_today: int
     access_today: int
     unknown_detections_today: int
+    avg_detection_latency_ms: float = 0.0
+    detection_fps: float = 0.0
 
 
 class ExportRequest(BaseModel):

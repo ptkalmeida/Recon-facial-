@@ -169,6 +169,7 @@
         .stat-icon.green { background: #d1fae5; color: var(--success); }
         .stat-icon.purple { background: #ede9fe; color: var(--secondary); }
         .stat-icon.red { background: #fee2e2; color: var(--danger); }
+        .stat-icon.orange { background: #fef3c7; color: var(--warning); }
         
         .stat-number { font-size: 2em; font-weight: 700; }
         .stat-label { color: var(--text-light); margin-top: 5px; }
@@ -206,6 +207,8 @@
         
         .status-present { background: #d1fae5; color: #065f46; }
         .status-absent { background: #fee2e2; color: #991b1b; }
+        .log-row-alert { background: #fef2f2; }
+        .log-row-alert td:nth-child(3) { color: var(--danger); font-weight: 600; }
         
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
         
@@ -387,6 +390,16 @@
                     <div class="stat-number" id="unknownToday">0</div>
                     <div class="stat-label">Desconhecidos</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-icon orange"><i class="fas fa-tachometer-alt"></i></div>
+                    <div class="stat-number" id="detectionFps">0</div>
+                    <div class="stat-label">FPS de Detecção</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon orange"><i class="fas fa-stopwatch"></i></div>
+                    <div class="stat-number" id="avgLatency">0 ms</div>
+                    <div class="stat-label">Latência Média</div>
+                </div>
             </div>
             
             <div class="section">
@@ -442,6 +455,9 @@
                         </button>
                         <button class="btn" style="background: #ff9800; color: white;" onclick="manualOpenDoor()">
                             <i class="fas fa-door-open"></i> Abrir Porta Manual
+                        </button>
+                        <button class="btn btn-outline" id="fullscreenBtn" onclick="toggleCameraFullscreen()">
+                            <i class="fas fa-expand"></i> Tela Cheia
                         </button>
                     </div>
                 </div>
@@ -634,6 +650,8 @@
                 document.getElementById('presentToday').textContent = stats.present_today;
                 document.getElementById('accessToday').textContent = stats.access_today;
                 document.getElementById('unknownToday').textContent = stats.unknown_detections_today;
+                document.getElementById('detectionFps').textContent = (stats.detection_fps ?? 0).toFixed(1);
+                document.getElementById('avgLatency').textContent = Math.round(stats.avg_detection_latency_ms ?? 0) + ' ms';
             } catch (e) {
                 console.error('Erro ao carregar estatísticas:', e);
             }
@@ -663,13 +681,24 @@
             }
         }
         
+        let lastAccessLogId = 0;
+        let accessLogsInitialized = false;
+
         async function loadAccessLogs() {
             try {
-                const res = await apiCall('/api/access-logs?limit=20');
+                const incremental = accessLogsInitialized && lastAccessLogId > 0;
+                const url = incremental
+                    ? `/api/access-logs?limit=20&after_id=${lastAccessLogId}`
+                    : '/api/access-logs?limit=20';
+                const res = await apiCall(url);
                 const logs = await res.json();
-                
+
+                if (logs.length > 0) {
+                    lastAccessLogId = Math.max(lastAccessLogId, ...logs.map(l => l.id));
+                }
+
                 const html = logs.map(l => `
-                    <tr>
+                    <tr class="${l.action === 'unknown_detected' ? 'log-row-alert' : ''}">
                         <td>${new Date(l.created_at).toLocaleString()}</td>
                         <td>${l.user_name || 'Desconhecido'}</td>
                         <td>${l.action}</td>
@@ -677,8 +706,14 @@
                         <td>${l.confidence ? (l.confidence * 100).toFixed(1) + '%' : 'N/A'}</td>
                     </tr>
                 `).join('');
-                
-                document.getElementById('accessLogsTable').innerHTML = html || '<tr><td colspan="5" style="text-align: center;">Nenhum registro</td></tr>';
+
+                const tbody = document.getElementById('accessLogsTable');
+                if (incremental) {
+                    if (html) tbody.insertAdjacentHTML('afterbegin', html);
+                } else {
+                    tbody.innerHTML = html || '<tr><td colspan="5" style="text-align: center;">Nenhum registro</td></tr>';
+                    accessLogsInitialized = true;
+                }
             } catch (e) {
                 console.error('Erro ao carregar logs:', e);
             }
@@ -903,6 +938,28 @@
             placeholder.style.display = 'block';
             showToast('Câmera parada');
         }
+
+        function toggleCameraFullscreen() {
+            const preview = document.getElementById('cameraPreview');
+            if (!document.fullscreenElement) {
+                preview.requestFullscreen().catch(e => {
+                    console.error('Erro ao entrar em tela cheia:', e);
+                    showToast('Não foi possível entrar em tela cheia');
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            const preview = document.getElementById('cameraPreview');
+            const btn = document.getElementById('fullscreenBtn');
+            if (!btn) return;
+            const isFullscreen = document.fullscreenElement === preview;
+            btn.innerHTML = isFullscreen
+                ? '<i class="fas fa-compress"></i> Sair da Tela Cheia'
+                : '<i class="fas fa-expand"></i> Tela Cheia';
+        });
 
         function startDetectionLoop() {
             const offscreenCanvas = document.createElement('canvas');
@@ -1233,6 +1290,12 @@
             loadStats();
             loadPresence();
             loadAccessLogs();
+
+            setInterval(() => {
+                loadStats();
+                loadPresence();
+                loadAccessLogs();
+            }, 3000);
         });
     </script>
 </body>

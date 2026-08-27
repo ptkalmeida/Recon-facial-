@@ -64,6 +64,22 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/face_recognition.log"
+
+    # Email alerts (unknown face detected)
+    alerts_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = Field(default_factory=lambda: os.getenv("SMTP_PASSWORD", ""))
+    smtp_from: str = ""
+    alert_email_to: str = ""
+    alert_cooldown_seconds: int = 600
+
+    # Optional server-side camera capture (local webcam index or RTSP/file URL)
+    server_camera_enabled: bool = False
+    server_camera_source: str = ""
+    server_camera_id: str = "server-cam"
+    server_camera_interval_seconds: float = 1.0
     
     class Config:
         env_file = ".env"
@@ -149,6 +165,22 @@ settings_dict = {
     "logging": {
         "level": settings.log_level,
         "log_file": settings.log_file
+    },
+    "alerts": {
+        "enabled": settings.alerts_enabled,
+        "smtp_host": settings.smtp_host,
+        "smtp_port": settings.smtp_port,
+        "smtp_user": settings.smtp_user,
+        "smtp_password": settings.smtp_password,
+        "smtp_from": settings.smtp_from,
+        "alert_email_to": settings.alert_email_to,
+        "cooldown_seconds": settings.alert_cooldown_seconds
+    },
+    "server_camera": {
+        "enabled": settings.server_camera_enabled,
+        "source": settings.server_camera_source,
+        "camera_id": settings.server_camera_id,
+        "interval_seconds": settings.server_camera_interval_seconds
     }
 }
 
