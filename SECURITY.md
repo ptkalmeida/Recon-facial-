@@ -4,9 +4,9 @@
 
 Este documento descreve as medidas de segurança implementadas no Face Recognition Pro 3.0
 e orienta uma implantação segura. Ele foi revisado para refletir o que está **de fato**
-implementado no código — não apenas o que foi planejado — incluindo uma seção de
-[limitações conhecidas](#limitações-de-segurança-conhecidas) para itens que existem no
-código mas não funcionam como o nome sugere, ou que estão parcialmente implementados.
+implementado no código — não apenas o que foi planejado. As divergências encontradas numa
+auditoria em 2026-08-27 (ver changelog da versão 3.0) já foram corrigidas; o que resta como
+limitação real e deliberada está marcado explicitamente no texto abaixo.
 
 ## Recursos de Segurança Implementados
 
@@ -50,9 +50,9 @@ produção — ver [docs/API.md](docs/API.md) para o contrato de `/api/health` q
 **Funcionalidades**:
 - Autenticação baseada em JWT com geração segura de token.
 - Validação de força de senha (mínimo 8 caracteres, maiúscula, minúscula, dígito e caractere
-  especial) — **aplicada na troca de senha** (`POST /api/auth/change-password`). A senha
-  admin inicial, definida via `ADMIN_PASSWORD` no `.env`, **não passa por essa validação**
-  no primeiro boot — garanta que ela já nasça forte.
+  especial) — aplicada tanto na troca de senha (`POST /api/auth/change-password`) quanto na
+  senha admin inicial definida via `ADMIN_PASSWORD` no `.env`: em produção, o sistema recusa
+  subir se ela for fraca; fora de produção, só avisa no log e segue.
 - Hash de senha com bcrypt (fator de custo adaptativo).
 - Limite de tentativas de autenticação (5 tentativas por 5 minutos, bloqueio de 15 minutos).
 - Bloqueio automático e temporário após tentativas falhas.
@@ -65,13 +65,11 @@ produção — ver [docs/API.md](docs/API.md) para o contrato de `/api/health` q
 | Reconhecimento (`/api/recognition/detect`) | 60 requisições | 1 minuto | 1 minuto |
 | API geral | 100 requisições | 1 minuto | — |
 
-> **Limitação conhecida**: os limites de login e reconhecimento acima estão implementados e
-> ativos, mas os valores estão fixos no código (`app/security/rate_limiter.py`) — as
-> variáveis `AUTH_MAX_ATTEMPTS`/`AUTH_BLOCK_DURATION` do `.env` existem e coincidem com os
-> defaults, mas não têm efeito real se alteradas. O limite de "API geral" (100/min) está
-> instanciado mas **não é aplicado a nenhuma rota** — hoje só é usado para uma limpeza
-> periódica de memória, não para bloquear requisições. Veja
-> [limitações conhecidas](#limitações-de-segurança-conhecidas).
+Os três limites acima estão ativos: login e reconhecimento honram
+`AUTH_MAX_ATTEMPTS`/`AUTH_BLOCK_DURATION` do `.env`, e a API geral é de fato aplicada por um
+middleware dedicado (`GeneralRateLimitMiddleware`) a todas as rotas `/api/*`, exceto
+`/api/auth/login` e `/api/recognition/detect` (já protegidas por limiters próprios) e
+`/api/health` (sempre acessível para monitoramento).
 
 ### 3. Segurança de API
 
@@ -88,16 +86,18 @@ Todas as respostas incluem:
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 X-XSS-Protection: 1; mode=block
-Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<gerado por requisição>'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
 Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: camera=(self), microphone=(), ...
 Strict-Transport-Security: max-age=31536000 (apenas em produção)
 ```
 
-> **Limitação conhecida**: o CSP acima permite `'unsafe-inline'` e `'unsafe-eval'` em
-> `script-src`, e `'unsafe-inline'` em `style-src`. Isso é necessário hoje porque o
-> dashboard usa JavaScript inline, mas reduz significativamente a proteção que uma CSP
-> normalmente oferece contra XSS — scripts injetados inline não seriam bloqueados por ela.
+`script-src` não usa mais `'unsafe-inline'`/`'unsafe-eval'` — cada resposta gera um nonce
+aleatório (`app/security/middleware.py`), e só a tag `<script>` das páginas do dashboard
+carrega esse nonce; qualquer script injetado por um ataque de XSS não teria o nonce correto
+e seria bloqueado pelo navegador. `style-src` mantém `'unsafe-inline'` deliberadamente — o
+risco de XSS via `style` é bem menor que via `script`, e os templates usam bastante CSS
+inline; reescrevê-los fica para uma rodada futura, se necessário.
 
 ### 5. Configuração de CORS
 
@@ -117,29 +117,25 @@ allow_origins=["http://localhost:8001", "https://seudominio.com"]
 
 **Anti-spoofing**:
 - Checagem de vivacidade por análise de movimento entre frames consecutivos da mesma
-  câmera (diferença de pixel).
+  câmera (diferença de pixel na região do rosto).
 
-> **Limitação conhecida — importante**: essa checagem **não é** uma prevenção real de
-> replay attack. Ela apenas compara a diferença de pixels entre dois frames consecutivos
-> e considera "vivo" qualquer variação acima de um limiar baixo. Um vídeo ou foto exibido
-> na tela de um celular também produz diferenças de pixel entre frames (ruído da câmera,
-> reflexo, leve movimento) e pode facilmente passar nessa checagem. Não há detecção de
-> padrão de moiré de tela, análise de textura/frequência, nem estimativa de profundidade.
-> Trate esse recurso como uma redução de falsos positivos triviais (foto estática), não
-> como proteção contra um ataque de apresentação (presentation attack) planejado.
+> **Limitação deliberada e permanente**: essa checagem **não é** uma prevenção real de
+> replay attack, e não pretende ser. Um vídeo ou foto exibido na tela de um celular também
+> produz diferença de pixel entre frames e pode passar nessa checagem. Não há detecção de
+> padrão de moiré de tela, análise de textura/frequência, nem estimativa de profundidade —
+> isso exigiria um modelo de anti-spoofing dedicado, fora do escopo deste projeto. Trate
+> esse recurso apenas como um filtro contra foto 100% estática, não como proteção contra um
+> ataque de apresentação (presentation attack) planejado.
 
 **Proteção de dados**:
 - Embeddings faciais são armazenados no banco (não as imagens originais) —
   `app/api/routes.py`/`app/database/db.py` confirmam que nenhuma foto de cadastro é
   gravada em disco, apenas o vetor numérico do rosto.
 - Normalização L2 para comparação consistente entre embeddings.
-
-> **Limitação conhecida**: existe código de validação de qualidade de imagem (nitidez via
-> variância do Laplaciano, checagem de brilho) em `app/services/face_recognition_new.py`,
-> mas esse arquivo **não é usado** pelo serviço realmente carregado em produção
-> (`app/services/face_recognition.py`, importado por `app/api/routes.py`). Ou seja, hoje
-> não há validação de qualidade antes de extrair um embedding — qualquer imagem em que um
-> rosto seja detectado é processada, mesmo se borrada ou mal iluminada.
+- Validação de qualidade de imagem (nitidez via variância do Laplaciano, brilho, contraste,
+  tamanho mínimo do rosto) roda em `extract_embedding()` antes de qualquer cadastro ou
+  reconhecimento — imagens borradas, muito escuras/claras ou com rosto pequeno demais são
+  rejeitadas.
 
 ## Checklist de Implantação em Produção
 
@@ -170,8 +166,8 @@ allow_origins=["http://localhost:8001", "https://seudominio.com"]
    ```
 
 5. **Defina uma senha de admin forte** (mínimo 8 caracteres, maiúsculas, minúsculas,
-   números e caracteres especiais, sem palavras de dicionário) — lembre-se de que essa
-   senha inicial não é validada automaticamente pelo sistema (ver seção 2 acima).
+   números e caracteres especiais, sem palavras de dicionário) — em `ENVIRONMENT=production`
+   o sistema recusa iniciar se `ADMIN_PASSWORD` não atender a esses requisitos.
 
 6. **Configure o firewall**:
    - Restrinja o acesso apenas às portas necessárias.
@@ -252,24 +248,12 @@ Todos os eventos relevantes de segurança são registrados:
 - Detecções de rostos desconhecidos.
 - Operações de abertura de porta.
 
-## Limitações de Segurança Conhecidas
+## Limitação de Segurança Deliberada
 
-Lista consolidada dos itens identificados em auditoria interna (2026-08-27) que existem no
-código mas não funcionam exatamente como a documentação anterior sugeria:
-
-1. `AUTH_MAX_ATTEMPTS`/`AUTH_BLOCK_DURATION` do `.env` não têm efeito — os valores do rate
-   limiter de login estão fixos no código.
-2. O rate limiter de "API geral" (100 req/min) não é aplicado a nenhuma rota — só roda
-   limpeza periódica de memória.
-3. CSP permite `'unsafe-inline'`/`'unsafe-eval'`, reduzindo a proteção contra XSS.
-4. A checagem de "vivacidade" é uma diferença de pixel simples, não uma prevenção real de
-   replay attack — ver seção 6.
-5. A validação de qualidade de imagem existe em um arquivo não utilizado pelo serviço real
-   (`face_recognition_new.py`), não no pipeline ativo.
-6. A validação de força de senha não se aplica à senha admin inicial definida via `.env`.
-
-Nenhum desses itens foi corrigido nesta revisão — o objetivo aqui foi deixar o documento
-fiel ao comportamento real do sistema. A correção de cada um é um trabalho separado.
+O único item que continua fora do escopo, por decisão consciente (não por lacuna
+não descoberta): a checagem de vivacidade (seção 6 acima) é um filtro simples contra foto
+estática, não uma proteção real contra replay attack — isso exigiria um modelo de
+anti-spoofing dedicado.
 
 ## Changelog
 
@@ -281,8 +265,13 @@ fiel ao comportamento real do sistema. A correção de cada um é um trabalho se
 - [x] `/api/health` expõe o estado real do serviço de reconhecimento facial
       (`model_ready`/`model_error`).
 - [x] Captura de câmera opcional do lado do servidor (webcam local ou RTSP/arquivo).
-- [x] Documento de segurança revisado para refletir o comportamento real do código (ver
-      seção de limitações conhecidas acima).
+- [x] Auditoria interna (2026-08-27) identificou 6 divergências entre este documento e o
+      código real; todas corrigidas na mesma revisão:
+      rate limit de login e de API geral agora honram `.env`/são de fato aplicados;
+      CSP usa nonce por requisição em vez de `unsafe-inline`/`unsafe-eval`;
+      validação de qualidade de imagem ativada no serviço real (arquivo morto removido);
+      liveness com limiar mais rigoroso e sem o campo `blink_detected` (nunca calculado);
+      validação de força de senha também cobre a senha admin inicial via `.env`.
 
 ### Versão 2.0 - Refatoração de Segurança
 - [x] Removidos segredos hardcoded dos arquivos de configuração.
@@ -292,8 +281,8 @@ fiel ao comportamento real do sistema. A correção de cada um é um trabalho se
 - [x] Cabeçalhos de segurança adicionados a todas as respostas.
 - [x] Configuração de CORS restringida.
 - [x] Algoritmo de reconhecimento facial unificado (DeepFace Facenet512).
-- [x] Validação de qualidade de rosto adicionada (ver limitação nº 5 acima).
-- [x] Detecção de anti-spoofing implementada (ver limitação nº 4 acima).
+- [x] Validação de qualidade de rosto adicionada (ativada de fato na versão 3.0).
+- [x] Detecção de anti-spoofing implementada (ver limitação deliberada acima).
 - [x] Middleware de validação de requisição adicionado.
 
 ## Referências

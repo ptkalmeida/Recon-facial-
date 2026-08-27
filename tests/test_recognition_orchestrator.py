@@ -1,6 +1,10 @@
-import pytest
 from datetime import datetime, timedelta
-from app.services.recognition_orchestrator import RecognitionOrchestrator, RecognitionAction
+
+from app.services.recognition_orchestrator import (
+    RecognitionAction,
+    RecognitionOrchestrator,
+)
+
 
 def test_should_only_trigger_log_after_cooldown():
     # Setup com cooldown de 5 segundos e 1 frame para log imediato
