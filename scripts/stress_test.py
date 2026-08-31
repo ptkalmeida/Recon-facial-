@@ -1,13 +1,24 @@
 import asyncio
 import httpx
+import os
+import sys
 import time
 import statistics
 import concurrent.futures
 from datetime import datetime
 
 # Configurações de teste
-BASE_URL = "http://localhost:8001/api"
-ADMIN_PASSWORD = "admin123" # Altere se necessário
+BASE_URL = os.getenv("STRESS_TEST_BASE_URL", "http://localhost:8001/api")
+
+# Sem senha embutida: o script lê a mesma variável usada pela aplicação.
+#   Windows (PowerShell):  $env:ADMIN_PASSWORD = "..."
+#   Linux/macOS:           export ADMIN_PASSWORD="..."
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+if not ADMIN_PASSWORD:
+    sys.exit(
+        "ADMIN_PASSWORD não definida. Defina a variável de ambiente antes de "
+        "rodar o stress test (nunca coloque a senha no código)."
+    )
 LOGIN_URL = f"{BASE_URL}/auth/login"
 HEALTH_URL = f"{BASE_URL}/health"
 STATS_URL = f"{BASE_URL}/stats"

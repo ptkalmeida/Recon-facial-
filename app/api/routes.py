@@ -7,10 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile,
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 
+from pydantic import EmailStr, TypeAdapter, ValidationError
+
 from app.database.db import db_manager
 from app.models.schemas import (
     UserCreate, UserResponse, UserUpdate,
-    SystemStats, LoginRequest, LoginResponse, ExportRequest
+    SystemStats, LoginRequest, LoginResponse, ExportRequest,
+    validate_person_name
 )
 from app.services.face_recognition import FaceRecognitionService
 from app.security.auth import (
@@ -148,7 +151,7 @@ async def change_password(
 @router.get("/users", response_model=List[UserResponse])
 async def get_users(
     active_only: bool = True,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     users = db_manager.get_all_users(active_only=active_only)
     return [UserResponse(**user.to_dict()) for user in users]
@@ -185,7 +188,7 @@ async def create_user(
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: int,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     user = db_manager.get_user(user_id)
     if not user:
@@ -241,6 +244,19 @@ async def register_user_with_face(
     current_user: dict = Depends(require_admin)
 ):
     try:
+        # `name`/`email` chegam como Form (sem schema Pydantic), então a validação
+        # tem de ser explícita aqui - o nome é renderizado no dashboard e exportado
+        # para planilha.
+        try:
+            name = validate_person_name(name)
+            if email:
+                email = str(TypeAdapter(EmailStr).validate_python(email))
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Dados inválidos: {exc}"
+            )
+
         user = db_manager.get_user_by_name(name)
         if user:
             raise HTTPException(
@@ -300,11 +316,14 @@ async def register_user_with_face(
         if calibrated_threshold is not None:
             response["calibrated_threshold"] = calibrated_threshold
         return response
+    except HTTPException:
+        # Erros de validação/conflito já têm status próprio - não podem virar 500.
+        raise
     except Exception as e:
         logger.error(f"FATAL ERROR during registration: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro interno no servidor: {str(e)}"
+            detail="Erro interno no servidor"
         )
 
 
@@ -317,7 +336,7 @@ async def get_current_presence(current_user: dict = Depends(get_current_user)):
 async def get_presence_history(
     user_id: Optional[int] = None,
     date: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     records = db_manager.get_presence_records(user_id=user_id, date=date)
     return [r.to_dict() for r in records]
@@ -328,7 +347,7 @@ async def get_access_logs(
     user_id: Optional[int] = None,
     after_id: Optional[int] = None,
     limit: int = 100,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     logs = db_manager.get_access_logs(user_id=user_id, after_id=after_id, limit=limit)
     return [log.to_dict() for log in logs]
@@ -452,7 +471,7 @@ async def get_system_stats(current_user: dict = Depends(get_current_user)):
 @router.post("/export")
 async def export_data(
     request: ExportRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ):
     start = datetime.strptime(request.start_date, "%Y-%m-%d")
     end = datetime.strptime(request.end_date, "%Y-%m-%d")
@@ -511,7 +530,7 @@ async def export_data(
 
 
 @router.post("/hardware/open-door")
-async def manual_open_door(current_user: dict = Depends(get_current_user)):
+async def manual_open_door(current_user: dict = Depends(require_admin)):
     door_manager.open_door(duration=5)
     db_manager.log_access(
         user_id=current_user.get("id"),

@@ -77,6 +77,41 @@ middleware dedicado (`GeneralRateLimitMiddleware`) a todas as rotas `/api/*`, ex
 - Limite de tamanho de requisição (10MB por padrão).
 - Rate limiting por rota (ver ressalva acima sobre a API geral).
 - Rastreamento de requisições por IP e por usuário.
+- Toda consulta ao banco passa pelo ORM (SQLAlchemy) com parâmetros vinculados — não há
+  concatenação de SQL em nenhum ponto do código.
+- Respostas de erro 500 não incluem a mensagem da exceção interna.
+
+**Autorização por rota**: rotas que expõem o cadastro de pessoas ou acionam hardware exigem
+papel de admin (`require_admin`), não apenas um token válido:
+
+| Rota | Dependência |
+|---|---|
+| `GET/POST/PUT/DELETE /api/users*` | `require_admin` |
+| `GET /api/access-logs`, `GET /api/presence/history` | `require_admin` |
+| `POST /api/export` | `require_admin` |
+| `POST /api/hardware/open-door` | `require_admin` |
+| `GET /api/stats`, `GET /api/presence/current`, `POST /api/recognition/detect` | `get_current_user` (operacional) |
+| `POST /api/auth/change-password` | `get_current_user` (auto-serviço) |
+
+Coberto por `tests/test_route_authorization.py`, que reprova qualquer rota da primeira lista
+que volte a aceitar um token com `role != "admin"`.
+
+### 3b. Tratamento de Entrada e Saída (XSS / injeção de fórmula)
+
+- **Escape na saída**: `dashboard.html` e `monitor.html` passam todo valor vindo da API por
+  `escapeHtml()` antes de interpolar em `innerHTML` (nomes, e-mails, ações e status nas
+  tabelas de presença, logs e usuários, e no overlay de detecção). Sem isso, um nome de
+  pessoa contendo `<img src=x onerror=...>` executaria script na sessão de quem abrisse o
+  dashboard — e como o JWT fica no `localStorage`, resultaria em roubo de sessão.
+- **Validação na entrada** (segunda camada): `validate_person_name()`
+  (`app/models/schemas.py`) restringe nome de pessoa a letras, números, espaço, hífen,
+  apóstrofo e ponto — rejeitando `<`, `>`, `&`, `"`, `=` e caracteres de controle. Aplicada
+  em `UserCreate`/`UserUpdate` e explicitamente em `POST /api/users_register`, que recebe
+  `Form` e por isso não passa por schema Pydantic.
+- **Exportação**: `sanitize_cell()` (`app/utils/export.py`) prefixa com apóstrofo qualquer
+  célula iniciada por `=`, `+`, `-` ou `@`, neutralizando CSV/Excel Formula Injection
+  (CWE-1236) na planilha exportada.
+- Coberto por `tests/test_input_validation.py` e `tests/test_export_sanitization.py`.
 
 ### 4. Cabeçalhos de Segurança
 
@@ -128,6 +163,16 @@ allow_origins=["http://localhost:8001", "https://seudominio.com"]
 > ataque de apresentação (presentation attack) planejado.
 
 **Proteção de dados**:
+- **Criptografia em repouso do dado biométrico**: quando `EMBEDDING_ENCRYPTION_KEY` está
+  definida, cada embedding é criptografado com Fernet (AES-128-CBC + HMAC-SHA256) antes de
+  ir para o banco — a chave é derivada por PBKDF2-HMAC-SHA256 (480.000 iterações) com salt
+  aleatório guardado em `data/embedding_salt.key` (`app/security/crypto.py`). Sem a chave, o
+  sistema grava em texto claro e registra um aviso no startup. Bancos criados antes desta
+  versão continuam legíveis (o formato antigo é aceito na leitura); use
+  `scripts/encrypt_embeddings.py` para criptografar o que já está gravado.
+
+  > **Guarde `data/embedding_salt.key` junto do backup da chave.** Sem os dois, os
+  > embeddings já gravados não podem ser recuperados.
 - Embeddings faciais são armazenados no banco (não as imagens originais) —
   `app/api/routes.py`/`app/database/db.py` confirmam que nenhuma foto de cadastro é
   gravada em disco, apenas o vetor numérico do rosto.
@@ -272,6 +317,20 @@ anti-spoofing dedicado.
       validação de qualidade de imagem ativada no serviço real (arquivo morto removido);
       liveness com limiar mais rigoroso e sem o campo `blink_detected` (nunca calculado);
       validação de força de senha também cobre a senha admin inicial via `.env`.
+- [x] Auditoria de segurança completa (2026-08-31,
+      `docs/security-audit/relatorio-auditoria-seguranca.pdf`) — os 5 achados foram
+      corrigidos nesta mesma revisão:
+      - XSS armazenado (crítico) via nome/e-mail de pessoa no dashboard e no monitor:
+        `escapeHtml()` na saída + `validate_person_name()` na entrada.
+      - Rotas sensíveis de leitura/ação promovidas de `get_current_user` para
+        `require_admin`, com teste travando o contrato.
+      - CSV/Excel Formula Injection na exportação: `sanitize_cell()`.
+      - Senha admin hardcoded em `scripts/stress_test.py`: agora lida de
+        `ADMIN_PASSWORD`, e o script recusa rodar sem ela.
+      - `EMBEDDING_ENCRYPTION_KEY` deixou de ser configuração morta: os embeddings
+        faciais são criptografados em repouso (`app/security/crypto.py`).
+- [x] `DATABASE_PATH` do `.env` passou a ter precedência sobre `config.yaml` — antes o
+      caminho vinha só do YAML e a variável de ambiente não tinha efeito nenhum.
 
 ### Versão 2.0 - Refatoração de Segurança
 - [x] Removidos segredos hardcoded dos arquivos de configuração.

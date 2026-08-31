@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import numpy as np
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -11,6 +12,8 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker, joinedl
 from sqlalchemy.sql import func
 from contextlib import contextmanager
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 Base = declarative_base()
@@ -241,10 +244,14 @@ class DatabaseManager:
     def add_embedding(self, user_id: int, embedding_data: List[float], 
                       model_used: str = "Facenet512", image_path: Optional[str] = None,
                       is_primary: bool = False) -> Embedding:
+        from app.security.crypto import get_embedding_cipher
+
         with self.session() as session:
             embedding = Embedding(
                 user_id=user_id,
-                embedding_data=embedding_data,
+                # Dado biométrico criptografado em repouso quando
+                # EMBEDDING_ENCRYPTION_KEY está definida.
+                embedding_data=get_embedding_cipher().encrypt(embedding_data),
                 model_used=model_used,
                 image_path=image_path,
                 is_primary=is_primary
@@ -267,15 +274,28 @@ class DatabaseManager:
             )
 
     def get_all_embeddings_data(self) -> List[Dict[str, Any]]:
-        embeddings = self.get_all_embeddings()
-        return [
-            {
+        from app.security.crypto import EmbeddingCipherError, get_embedding_cipher
+
+        cipher = get_embedding_cipher()
+        data = []
+        for embedding in self.get_all_embeddings():
+            try:
+                embedding_data = cipher.decrypt(embedding.embedding_data)
+            except EmbeddingCipherError as exc:
+                # Um embedding ilegível não pode derrubar o carregamento dos
+                # outros - o rosto correspondente deixa de ser reconhecido até
+                # que a chave/salt correta seja restaurada.
+                logger.error(
+                    "Embedding %s (user_id=%s) ignorado: %s",
+                    embedding.id, embedding.user_id, exc
+                )
+                continue
+            data.append({
                 "user_id": embedding.user_id,
                 "user_name": embedding.user.name if embedding.user else "Unknown",
-                "embedding_data": embedding.embedding_data
-            }
-            for embedding in embeddings
-        ]
+                "embedding_data": embedding_data
+            })
+        return data
 
     def log_access(self, user_id: Optional[int], action: str, status: str = "success",
                    camera_source: Optional[str] = None, confidence: Optional[float] = None,
@@ -430,4 +450,10 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
 
 
 settings_dict = load_config()
-db_manager = DatabaseManager(settings_dict.get("database", {}).get("path", "data/face_recognition.db"))
+
+# DATABASE_PATH (.env) tem precedência sobre config.yaml - antes o caminho vinha só
+# do YAML, então apontar o banco por variável de ambiente não tinha efeito nenhum e
+# qualquer script acabava escrevendo no banco de produção.
+_yaml_db_path = settings_dict.get("database", {}).get("path", "data/face_recognition.db")
+_db_path = os.getenv("DATABASE_PATH") or _yaml_db_path
+db_manager = DatabaseManager(_db_path)

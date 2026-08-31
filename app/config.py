@@ -210,6 +210,14 @@ def validate_security_settings() -> tuple[bool, list[str]]:
         if not is_strong:
             warnings.append(f"ADMIN_PASSWORD does not meet strength requirements: {error}")
 
+    if not settings.embedding_encryption_key:
+        warnings.append(
+            "EMBEDDING_ENCRYPTION_KEY not set - face embeddings (biometric data) "
+            "will be stored in plaintext"
+        )
+    elif len(settings.embedding_encryption_key) < 16:
+        warnings.append("EMBEDDING_ENCRYPTION_KEY too short - should be at least 16 characters")
+
     if settings.environment == "production":
         if settings.reload:
             warnings.append("Server reload enabled in production")

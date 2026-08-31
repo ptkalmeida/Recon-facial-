@@ -817,6 +817,20 @@
             });
         }
         
+        // Escapa qualquer valor vindo da API antes de interpolar em innerHTML.
+        // Nomes de usuário são texto livre: sem isso, um cadastro com
+        // `<img src=x onerror=...>` no nome executaria script nesta tela
+        // (XSS armazenado -> roubo do token guardado no localStorage).
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function updateOverlay(detections) {
             const overlay = document.getElementById('detectionOverlay');
             
@@ -829,7 +843,7 @@
                 const isKnown = det.user_id !== null;
                 return `
                     <div class="detection-info ${isKnown ? 'known' : 'unknown'}">
-                        <div class="detection-name">${det.user_name}</div>
+                        <div class="detection-name">${escapeHtml(det.user_name)}</div>
                         <div class="detection-confidence">
                             ${isKnown ? '👤 Reconhecido' : '❓ Desconhecido'} - 
                             ${Math.round(det.match_confidence * 100)}% confiança
@@ -895,9 +909,9 @@
                 
                 list.innerHTML = presence.map(p => `
                     <div class="presence-item">
-                        <div class="presence-avatar">${p.user.name.charAt(0).toUpperCase()}</div>
+                        <div class="presence-avatar">${escapeHtml(p.user.name.charAt(0).toUpperCase())}</div>
                         <div class="presence-info">
-                            <div class="presence-name">${p.user.name}</div>
+                            <div class="presence-name">${escapeHtml(p.user.name)}</div>
                             <div class="presence-time">
                                 ${p.status === 'presente' ? 'Entrada: ' + (p.check_in ? new Date(p.check_in).toLocaleTimeString('pt-BR') : '--:--') : 'Ausente'}
                             </div>
@@ -927,10 +941,10 @@
                     return `
                         <div class="log-item ${type}">
                             <div class="log-header">
-                                <span class="log-user">${l.user_name || 'Sistema'}</span>
+                                <span class="log-user">${escapeHtml(l.user_name || 'Sistema')}</span>
                                 <span class="log-time">${new Date(l.created_at).toLocaleTimeString('pt-BR')}</span>
                             </div>
-                            <div class="log-action">${formatAction(l.action)}</div>
+                            <div class="log-action">${escapeHtml(formatAction(l.action))}</div>
                         </div>
                     `;
                 }).join('');
@@ -940,7 +954,7 @@
                 miniLogs.innerHTML = logs.slice(0, 5).map(l => `
                     <div class="log-item ${l.action === 'unknown_detected' ? 'danger' : 'success'}" style="padding: 8px 12px;">
                         <span style="font-size: 0.85em;">
-                            ${l.user_name || '?'} - ${formatAction(l.action)}
+                            ${escapeHtml(l.user_name || '?')} - ${escapeHtml(formatAction(l.action))}
                         </span>
                         <span style="color: var(--text-light); font-size: 0.8em; float: right;">
                             ${new Date(l.created_at).toLocaleTimeString('pt-BR')}

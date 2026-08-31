@@ -1,6 +1,31 @@
-from pydantic import BaseModel, EmailStr, Field
+import re
+
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+# Nome de pessoa: letras (com acento), espaço, hífen, apóstrofo e ponto.
+# Rejeita `<`, `>`, `&`, `"`, `=` e caracteres de controle - o nome é renderizado
+# no dashboard/monitor e exportado para planilha, então metacaracteres de HTML e
+# de fórmula não têm por que ser aceitos na entrada (o escape na saída continua
+# valendo; esta é a segunda camada).
+# Espaço é literal (não `\s`): `\s` casaria \n/\r/\t, que não têm lugar num nome.
+PERSON_NAME_PATTERN = re.compile(r"^[\w '\.\-]+$", re.UNICODE)
+
+
+def validate_person_name(value: str) -> str:
+    """Normaliza e valida um nome de pessoa. Levanta ValueError se inválido."""
+    name = (value or "").strip()
+    if not name:
+        raise ValueError("Nome não pode ser vazio")
+    if len(name) > 255:
+        raise ValueError("Nome não pode ter mais de 255 caracteres")
+    if not PERSON_NAME_PATTERN.match(name):
+        raise ValueError(
+            "Nome contém caracteres não permitidos "
+            "(use apenas letras, números, espaço, hífen, apóstrofo e ponto)"
+        )
+    return name
 
 
 class UserBase(BaseModel):
@@ -10,7 +35,12 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    # A validação vive só nos schemas de entrada: `UserResponse` também herda de
+    # `UserBase` e não pode falhar ao serializar um nome legado gravado antes
+    # desta regra existir.
+    @validator("name")
+    def _check_name(cls, v):
+        return validate_person_name(v)
 
 
 class UserUpdate(BaseModel):
@@ -18,6 +48,10 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @validator("name")
+    def _check_name(cls, v):
+        return v if v is None else validate_person_name(v)
 
 
 class UserResponse(UserBase):

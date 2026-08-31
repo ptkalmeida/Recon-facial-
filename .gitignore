@@ -26,6 +26,9 @@ backup_*.zip
 # Local-only code-quality tooling, unrelated to the app - kept on disk, not on GitHub
 skills/
 
+# Isolated venv used only to (re)generate the security audit PDF
+docs/security-audit/.venv-audit/
+
 # IDE
 .vscode/
 

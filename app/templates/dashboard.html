@@ -641,6 +641,20 @@
             return response;
         }
         
+        // Escapa qualquer valor vindo da API antes de interpolar em innerHTML.
+        // Nomes/e-mails de usuário são texto livre: sem isso, um cadastro com
+        // `<img src=x onerror=...>` no nome executaria script no dashboard de
+        // quem abrir a tela (XSS armazenado -> roubo do token do localStorage).
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         async function loadStats() {
             try {
                 const res = await apiCall('/api/stats');
@@ -664,10 +678,10 @@
                 
                 const html = presence.map(p => `
                     <tr>
-                        <td>${p.user.name}</td>
+                        <td>${escapeHtml(p.user.name)}</td>
                         <td>
                             <span class="status-badge ${p.status === 'presente' ? 'status-present' : 'status-absent'}">
-                                ${p.status}
+                                ${escapeHtml(p.status)}
                             </span>
                         </td>
                         <td>${p.check_in ? new Date(p.check_in).toLocaleTimeString() : '-'}</td>
@@ -700,9 +714,9 @@
                 const html = logs.map(l => `
                     <tr class="${l.action === 'unknown_detected' ? 'log-row-alert' : ''}">
                         <td>${new Date(l.created_at).toLocaleString()}</td>
-                        <td>${l.user_name || 'Desconhecido'}</td>
-                        <td>${l.action}</td>
-                        <td>${l.status}</td>
+                        <td>${escapeHtml(l.user_name || 'Desconhecido')}</td>
+                        <td>${escapeHtml(l.action)}</td>
+                        <td>${escapeHtml(l.status)}</td>
                         <td>${l.confidence ? (l.confidence * 100).toFixed(1) + '%' : 'N/A'}</td>
                     </tr>
                 `).join('');
@@ -727,9 +741,9 @@
                 const html = users.map(u => `
                     <tr>
                         <td>${u.id}</td>
-                        <td>${u.name}</td>
-                        <td>${u.email || '-'}</td>
-                        <td>${u.role}</td>
+                        <td>${escapeHtml(u.name)}</td>
+                        <td>${escapeHtml(u.email || '-')}</td>
+                        <td>${escapeHtml(u.role)}</td>
                         <td>
                             <span class="status-badge ${u.is_active ? 'status-present' : 'status-absent'}">
                                 ${u.is_active ? 'Ativo' : 'Inativo'}
