@@ -63,12 +63,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # no 'unsafe-inline'/'unsafe-eval'. style-src keeps 'unsafe-inline' for now
         # (inline style attributes are used throughout the templates; XSS risk via
         # style is much lower than via script).
+        #
+        # Os dois CDNs abaixo são carregados por app/templates/*.html (fonte Inter e
+        # ícones Font Awesome). Sem eles no allowlist, o navegador bloqueia as
+        # folhas de estilo e as páginas ficam sem ícone nenhum - regressão que o
+        # teste de navegador (tests/browser/test_xss_escaping.py) pegou. Nenhum
+        # deles entra em script-src: só estilo e fonte.
         csp = (
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
-            "style-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' "
+            "https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
             "img-src 'self' data: blob:; "
-            "font-src 'self'; "
+            "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
             "connect-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "

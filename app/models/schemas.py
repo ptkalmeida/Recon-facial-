@@ -55,6 +55,12 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(UserBase):
+    # `str`, não `EmailStr`: validar e-mail na SAÍDA quebra o endpoint inteiro se
+    # o banco tiver uma linha com e-mail malformado (possível em cadastros feitos
+    # antes da validação de entrada existir). Nesse caso `GET /api/users` devolvia
+    # 500 e a aba Usuários ficava vazia. A validação de formato continua nos
+    # schemas de entrada, onde é útil.
+    email: Optional[str] = None
     id: int
     is_active: bool
     created_at: Optional[datetime] = None

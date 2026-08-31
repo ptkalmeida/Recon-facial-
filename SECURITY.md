@@ -111,7 +111,18 @@ que volte a aceitar um token com `role != "admin"`.
 - **Exportação**: `sanitize_cell()` (`app/utils/export.py`) prefixa com apóstrofo qualquer
   célula iniciada por `=`, `+`, `-` ou `@`, neutralizando CSV/Excel Formula Injection
   (CWE-1236) na planilha exportada.
-- Coberto por `tests/test_input_validation.py` e `tests/test_export_sanitization.py`.
+- Coberto por `tests/test_input_validation.py`, `tests/test_export_sanitization.py` e
+  por testes de navegador real em `tests/browser/` (Playwright), que sobem a aplicação,
+  semeiam o payload direto no banco e confirmam no Chromium que ele é exibido como texto
+  literal e que nada executa. Verificado por mutação: removendo o `escapeHtml()`, o teste
+  de texto literal quebra.
+- **Defesa em profundidade confirmada**: com o escape removido, o payload ainda não
+  executa — o CSP (`script-src` sem `'unsafe-inline'`) recusa o handler `onerror`
+  injetado. As duas camadas cobrem uma à outra.
+- Dados legados não derrubam a leitura: `UserResponse.email` é `str`, não `EmailStr` —
+  validar e-mail na saída fazia `GET /api/users` responder 500 quando havia uma linha
+  com e-mail malformado no banco, quebrando a aba Usuários por completo
+  (`tests/test_legacy_data_serialization.py`).
 
 ### 4. Cabeçalhos de Segurança
 
@@ -126,6 +137,13 @@ Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: camera=(self), microphone=(), ...
 Strict-Transport-Security: max-age=31536000 (apenas em produção)
 ```
+
+`style-src` e `font-src` incluem `https://fonts.googleapis.com`,
+`https://fonts.gstatic.com` e `https://cdnjs.cloudflare.com`: os templates carregam a
+fonte Inter e os ícones do Font Awesome desses CDNs. Sem eles no allowlist o navegador
+bloqueava as folhas de estilo e as páginas ficavam sem ícone nenhum — regressão
+introduzida junto com o CSP e detectada só depois, pelos testes de navegador. Nenhum dos
+dois entra em `script-src`.
 
 `script-src` não usa mais `'unsafe-inline'`/`'unsafe-eval'` — cada resposta gera um nonce
 aleatório (`app/security/middleware.py`), e só a tag `<script>` das páginas do dashboard

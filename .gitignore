@@ -23,11 +23,20 @@ backup_*.zip
 .qwen/
 .agents/
 
-# Local-only code-quality tooling, unrelated to the app - kept on disk, not on GitHub
+# Ferramental local, fora do escopo da aplicacao - fica em disco, nao no GitHub.
+# Este padrao cobre tanto o pacote local skills/ quanto .claude/skills/ (copias de
+# anthropics/skills). As skills docx/pdf/pptx/xlsx sao proprietarias ("All rights
+# reserved"), portanto NAO podem ser redistribuidas neste repositorio.
 skills/
 
 # Isolated venv used only to (re)generate the security audit PDF
 docs/security-audit/.venv-audit/
+
+# Isolated venv for the Playwright browser tests (ver tests/browser/README.md)
+.venv-browser/
+
+# Clone de referencia de anthropics/skills - repo de terceiros, com .git proprio
+anthropic-skills/
 
 # IDE
 .vscode/
