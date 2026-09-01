@@ -4,6 +4,23 @@
 # WARNING: Do NOT store secrets in this file!
 # All sensitive values must be set in .env file
 # See .env.example for reference
+#
+# ==========================================
+# ATENCAO - QUASE NADA AQUI E LIDO
+# ==========================================
+# `app/config.py` monta `settings_dict` exclusivamente a partir da classe
+# `Settings` (defaults do codigo + variaveis do .env). O YAML e carregado em
+# `yaml_config` e nunca usado. Consequencia pratica: editar valores aqui NAO tem
+# efeito nenhum. Exemplo real: `threshold: 0.3` abaixo, enquanto o valor em uso e
+# 0.4 (o default de `face_threshold` em app/config.py).
+#
+# A UNICA chave efetivamente lida e `database.path`, e so porque
+# `app/database/db.py` carrega este arquivo por conta propria - e mesmo essa
+# perde para a variavel de ambiente DATABASE_PATH.
+#
+# Para mudar configuracao de verdade, use o .env (ver .env.example).
+# Este arquivo esta mantido como documentacao do formato pretendido; unificar as
+# duas fontes de configuracao e uma pendencia conhecida.
 
 app_name: "Face Recognition Pro 3.0"
 version: "3.0.0"

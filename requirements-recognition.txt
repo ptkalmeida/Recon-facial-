@@ -17,6 +17,14 @@
 insightface==1.0.1
 onnxruntime==1.29.0
 
+# ATENCAO: o insightface declara `opencv-python` como dependencia. Se o ambiente
+# tiver `opencv-python-headless` instalado tambem, ficam DUAS distribuicoes
+# fornecendo o modulo `cv2` e qual delas ganha o import e imprevisivel - foi como
+# um OpenCV 5.0 entrou de carona aqui e quebrou cv2.CascadeClassifier. Por isso
+# requirements.txt pina `opencv-python==4.13.0.92`, a mesma variante. Se voce ja
+# tinha o headless instalado, remova-o:
+#     pip uninstall -y opencv-python-headless
+
 # ---------------------------------------------------------------------------
 # Opcao B: DeepFace + TensorFlow (Facenet512)
 # ---------------------------------------------------------------------------

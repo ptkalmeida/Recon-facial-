@@ -53,6 +53,15 @@ class FaceDetection:
     h: int
     landmarks: dict[str, tuple[int, int]] | None = None
 
+    #: Embedding já calculado pelo detector, quando o backend produz os dois de
+    #: uma vez (caso do InsightFace, cujo `.get()` devolve bbox e embedding na
+    #: mesma passada). `extract_embedding()` reaproveita este valor em vez de
+    #: rodar o modelo outra vez — e, mais importante, em vez de tentar detectar
+    #: rosto de novo dentro de um recorte já apertado, o que NÃO funciona: o
+    #: detector do InsightFace não encontra nada num crop onde o rosto ocupa
+    #: quase todo o quadro, e o embedding acabava caindo no fallback HOG.
+    embedding: np.ndarray | None = None
+
 
 @dataclass
 class FaceQualityMetrics:
@@ -80,6 +89,23 @@ class FaceRecognitionService:
         
         self.anti_spoofing_config = config.get("anti_spoofing", {})
         self.anti_spoofing_enabled = self.anti_spoofing_config.get("enabled", True)
+
+        # Permite (só para demonstração) que o fallback de histograma volte a
+        # gerar "embeddings". Padrão: recusar - ver extract_embedding().
+        self.allow_insecure_hog_embeddings = bool(
+            self.fr_config.get("allow_insecure_hog_embeddings", False)
+        )
+
+        # Nitidez mínima (variância do Laplaciano) para aceitar um rosto.
+        #
+        # Calibrado contra fotos reais de cadastro, não escolhido no chute: o
+        # valor anterior (100, fixo no código) recusava capturas de webcam
+        # 640x480 com nitidez 66 e 87 que produzem embeddings perfeitamente
+        # utilizáveis - as duas casaram entre si a distância 0.18, com o limiar de
+        # reconhecimento em 0.40. Recusá-las significa que a pessoa não consegue
+        # nem se cadastrar nem ser reconhecida. 40 mantém margem para barrar
+        # borrão de verdade sem rejeitar rosto bom.
+        self.min_sharpness = float(self.fr_config.get("min_sharpness", 40.0))
         
         self._initialized = False
         self._lock = threading.Lock()
@@ -206,7 +232,22 @@ class FaceRecognitionService:
                 logger.error(f"Error initializing MediaPipe: {e}")
                 HAS_MEDIAPIPE = False
             
-        # Fallback 4: OpenCV Haar Cascades
+        # Fallback 4: OpenCV Haar Cascades.
+        # O OpenCV 5.0 removeu CascadeClassifier das bindings Python, então este
+        # último recurso pode simplesmente não existir. Sem o guarda, a
+        # AttributeError sobe de initialize() e o serviço não inicializa de forma
+        # nenhuma — pior que assumir o estado degradado e dizê-lo.
+        if not hasattr(cv2, "CascadeClassifier"):
+            self.face_cascade = None
+            logger.error(
+                "Nenhum backend de detecção disponível: cv2.CascadeClassifier não "
+                "existe nesta versão do OpenCV (%s, removido na linha 5.x) e nenhuma "
+                "biblioteca de reconhecimento está instalada. Instale "
+                "requirements-recognition.txt ou fixe opencv-python na linha 4.x.",
+                cv2.__version__,
+            )
+            return self._finish_initialization("nenhum (OpenCV sem CascadeClassifier)")
+
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         self.face_cascade = cv2.CascadeClassifier(cascade_path)
         return self._finish_initialization("opencv-haar")
@@ -231,6 +272,45 @@ class FaceRecognitionService:
             logger.error(f"Erro ao carregar rostos conhecidos: {e}")
             return False
     
+    @staticmethod
+    def _iou(box_a: tuple[int, int, int, int], box_b: tuple[int, int, int, int]) -> float:
+        """Interseção sobre união de duas caixas (x, y, w, h)."""
+        ax, ay, aw, ah = box_a
+        bx, by, bw, bh = box_b
+        ix1, iy1 = max(ax, bx), max(ay, by)
+        ix2, iy2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        union = aw * ah + bw * bh - inter
+        return inter / union if union > 0 else 0.0
+
+    def _insightface_embedding_for(
+        self, frame: np.ndarray, detection: FaceDetection, min_iou: float = 0.3
+    ) -> np.ndarray | None:
+        """Embedding do InsightFace para a detecção pedida, rodando no frame todo.
+
+        Roda `.get()` na imagem completa (a única forma que funciona: o detector
+        precisa do contexto ao redor do rosto) e devolve o embedding do rosto com
+        maior sobreposição com `detection`.
+        """
+        faces = self._insightface_app.get(frame)
+        if not faces:
+            return None
+
+        target = (detection.x, detection.y, detection.w, detection.h)
+        best, best_iou = None, 0.0
+        for face in faces:
+            fx1, fy1, fx2, fy2 = [int(v) for v in face.bbox]
+            iou = self._iou(target, (fx1, fy1, max(0, fx2 - fx1), max(0, fy2 - fy1)))
+            if iou > best_iou:
+                best, best_iou = face, iou
+
+        if best is None or best_iou < min_iou:
+            return None
+        emb = getattr(best, "normed_embedding", None)
+        return None if emb is None else np.asarray(emb, dtype=np.float32)
+
     def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """L2 normalize an embedding vector."""
         norm = np.linalg.norm(embedding)
@@ -248,6 +328,10 @@ class FaceRecognitionService:
                 faces = self._insightface_app.get(frame)
                 for face in faces:
                     x1, y1, x2, y2 = [int(v) for v in face.bbox]
+                    # `normed_embedding` já vem pronto e L2-normalizado (512-d):
+                    # carregamos junto para extract_embedding() não precisar
+                    # redetectar num recorte (onde falharia).
+                    emb = getattr(face, "normed_embedding", None)
                     detections.append(
                         FaceDetection(
                             confidence=float(getattr(face, "det_score", 0.9)),
@@ -255,6 +339,10 @@ class FaceRecognitionService:
                             y=y1,
                             w=max(0, x2 - x1),
                             h=max(0, y2 - y1),
+                            embedding=(
+                                None if emb is None
+                                else np.asarray(emb, dtype=np.float32)
+                            ),
                         )
                     )
                 return detections
@@ -367,7 +455,7 @@ class FaceRecognitionService:
             size_ratio = face_area / img_area if img_area > 0 else 0
 
             is_good = (
-                laplacian_var > 100 and  # Not too blurry
+                laplacian_var > self.min_sharpness and
                 40 < brightness < 250 and  # Not too dark/bright
                 contrast > 20 and  # Some variation
                 size_ratio > 0.01  # Face is at least 1% of image
@@ -413,13 +501,31 @@ class FaceRecognitionService:
             if face_crop.size == 0:
                 return None
 
-            # Priority 0: InsightFace
+            # Priority 0: InsightFace, reaproveitando o embedding que o próprio
+            # detector já produziu para esta detecção.
+            #
+            # A versão anterior chamava `.get(face_crop)` aqui: pedir ao detector
+            # que achasse um rosto dentro de um recorte onde o rosto ocupa quase
+            # todo o quadro devolve ZERO rostos (verificado com fotos reais), e o
+            # embedding caía silenciosamente no fallback HOG. Ou seja: o sistema
+            # rodava com InsightFace instalado e ativo e ainda assim comparava
+            # histogramas de intensidade.
+            if face_detection.embedding is not None:
+                return self._normalize_embedding(face_detection.embedding)
+
             if self._insightface_app is not None:
                 try:
-                    faces = self._insightface_app.get(face_crop)
-                    if faces and len(faces) > 0:
-                        emb = np.array(faces[0].normed_embedding, dtype=np.float32)
+                    # Sem embedding pré-calculado (ex.: detecção veio de outro
+                    # backend): rode no frame COMPLETO e escolha o rosto de maior
+                    # sobreposição com a detecção pedida - nunca no recorte.
+                    emb = self._insightface_embedding_for(frame, face_detection)
+                    if emb is not None:
                         return self._normalize_embedding(emb)
+                    logger.warning(
+                        "InsightFace não encontrou rosto correspondente à detecção "
+                        "(%d,%d,%d,%d) no frame; caindo para o próximo backend",
+                        x, y, w, h,
+                    )
                 except Exception as e:
                     logger.error(f"InsightFace embedding error: {e}")
 
@@ -449,7 +555,28 @@ class FaceRecognitionService:
                 if encodings and len(encodings) > 0:
                     return encodings[0]
             
-            # Fallback: HOG features
+            # Fallback: features de histograma (HOG-like).
+            #
+            # NÃO é embedding facial: é a distribuição de intensidade do recorte.
+            # Num sistema de controle de acesso, usar isso como identidade pode
+            # liberar a porta para a pessoa errada, então por padrão recusamos e
+            # devolvemos None — que os chamadores já tratam ("Nenhum rosto válido
+            # encontrado"). Falhar visivelmente é melhor que identificar errado.
+            # Quem quiser o comportamento antigo (só faz sentido em demonstração)
+            # liga ALLOW_INSECURE_HOG_EMBEDDINGS=true.
+            if not self.allow_insecure_hog_embeddings:
+                logger.error(
+                    "Nenhum backend de reconhecimento produziu embedding e o "
+                    "fallback de histograma está desativado: rosto recusado. "
+                    "Instale requirements-recognition.txt (ou defina "
+                    "ALLOW_INSECURE_HOG_EMBEDDINGS=true, apenas para demonstração)."
+                )
+                return None
+
+            logger.warning(
+                "Embedding gerado pelo fallback de histograma — identificação NÃO "
+                "confiável (ALLOW_INSECURE_HOG_EMBEDDINGS=true)."
+            )
             return self._extract_hog_features(face_crop)
                     
         except Exception as e:

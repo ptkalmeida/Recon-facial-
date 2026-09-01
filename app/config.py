@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     face_detector_threshold: float = 0.7
     face_align: bool = True
     face_normalization: str = "base"
+    # Fallback de "embedding" por histograma de intensidade: não identifica
+    # pessoa. Desligado por padrão para o sistema recusar o rosto em vez de
+    # arriscar liberar acesso para quem não é. Ver extract_embedding().
+    allow_insecure_hog_embeddings: bool = False
+    # Nitidez mínima (variância do Laplaciano) para aceitar um rosto. Calibrado
+    # com fotos reais - ver FaceRecognitionService.min_sharpness.
+    face_min_sharpness: float = 40.0
     face_recognition_log_cooldown_seconds: int = 5
     face_recognition_confirmation_window_seconds: float = 2.5
     face_recognition_confirmation_min_frames: int = 3
@@ -151,7 +158,9 @@ settings_dict = {
         "normalization": settings.face_normalization,
         "log_cooldown_seconds": settings.face_recognition_log_cooldown_seconds,
         "confirmation_window_seconds": settings.face_recognition_confirmation_window_seconds,
-        "confirmation_min_frames": settings.face_recognition_confirmation_min_frames
+        "confirmation_min_frames": settings.face_recognition_confirmation_min_frames,
+        "allow_insecure_hog_embeddings": settings.allow_insecure_hog_embeddings,
+        "min_sharpness": settings.face_min_sharpness
     },
     "security": {
         "jwt_algorithm": settings.jwt_algorithm,

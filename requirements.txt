@@ -33,7 +33,13 @@ passlib==1.7.4                     # interface de hashing
 bcrypt==5.0.0                      # hash da senha admin + criptografia do embedding
 
 # --- Visao computacional (deteccao base, sem modelo de reconhecimento) ---
-opencv-python-headless==4.13.0.92
+# UMA unica distribuicao do OpenCV. Nao troque por opencv-python-headless nem
+# instale as duas: ambas fornecem o modulo `cv2` e a que ganha o import e
+# imprevisivel. O insightface (requirements-recognition.txt) declara
+# `opencv-python`, entao esta e a variante que evita o conflito.
+# Fixado na linha 4.x de proposito: o OpenCV 5.0 removeu cv2.CascadeClassifier
+# das bindings, que o fallback de deteccao usa.
+opencv-python==4.13.0.92
 numpy==2.4.4
 pillow==12.2.0
 

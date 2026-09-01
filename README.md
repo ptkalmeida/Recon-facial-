@@ -87,6 +87,18 @@ InsightFace `buffalo_l`).
 > Trocar de backend invalida os rostos já cadastrados — embeddings de modelos
 > diferentes não são comparáveis. É preciso recadastrar as pessoas.
 
+> ### Validação do reconhecimento (InsightFace `buffalo_l`)
+>
+> Medido com fotos reais de cadastro, embeddings de 512 dimensões:
+>
+> | par | distância de cosseno | veredito |
+> |---|---|---|
+> | pessoa A × pessoa B | 0.9046 | pessoas diferentes |
+> | pessoa A × outra foto da pessoa A | 0.1847 | mesma pessoa |
+> | pessoa B × outra foto da pessoa A | 0.8564 | pessoas diferentes |
+>
+> O limiar em uso (`FACE_THRESHOLD=0.4`) fica com boa margem dos dois lados.
+
 ### 4. Configuração de Segurança (IMPORTANTE!)
 
 ```bash
