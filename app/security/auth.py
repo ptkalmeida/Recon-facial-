@@ -8,11 +8,13 @@ from typing import Any
 
 import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# passlib removido: o CryptContext criado aqui não era usado por ninguém (as
+# funções abaixo chamam bcrypt direto, justamente porque passlib 1.7.4 - último
+# release em 2020 - quebra com bcrypt >= 4). Manter o import só somava uma
+# dependência sem manutenção ao processo.
 
 
 # Import secure settings

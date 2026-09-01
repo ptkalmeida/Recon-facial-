@@ -29,8 +29,9 @@ sqlalchemy==2.0.49
 
 # --- Seguranca ---
 python-jose[cryptography]==3.5.0   # JWT (HS256)
-passlib==1.7.4                     # interface de hashing
 bcrypt==5.0.0                      # hash da senha admin + criptografia do embedding
+# passlib removido: ultimo release em 2020, quebra com bcrypt >= 4 e o codigo ja
+# chamava bcrypt direto - o CryptContext em app/security/auth.py estava morto.
 
 # --- Visao computacional (deteccao base, sem modelo de reconhecimento) ---
 # UMA unica distribuicao do OpenCV. Nao troque por opencv-python-headless nem

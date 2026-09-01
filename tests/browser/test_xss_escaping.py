@@ -170,8 +170,10 @@ def page_factory(live_server, browser):
         page = browser.new_page()
         page.console_messages = []
         page.page_errors = []
+        page.responses = []
         page.on("console", lambda m: page.console_messages.append(m))
         page.on("pageerror", lambda e: page.page_errors.append(str(e)))
+        page.on("response", lambda r: page.responses.append((r.status, r.url)))
         # O dashboard redireciona para /login sem token no localStorage.
         page.add_init_script(f"localStorage.setItem('token', {json.dumps(token)});")
         # "load", não "domcontentloaded": os listeners de clique são registrados
@@ -275,3 +277,33 @@ def test_sem_violacao_de_csp_no_console(page_factory):
     ]
     assert not blocked, f"CSP bloqueou script legítimo: {blocked}"
     assert not page.page_errors, f"erro de JS na página: {page.page_errors}"
+
+
+def test_pagina_nao_depende_de_cdn_externo(page_factory):
+    """Fonte e ícones vêm de app/static/vendor/, não de CDN.
+
+    Antes o dashboard buscava a fonte Inter em fonts.googleapis.com e os ícones
+    em cdnjs.cloudflare.com — interface sem ícone nenhum quando a rede local não
+    tem internet, e um terceiro servindo CSS para a tela administrativa.
+    """
+    page = _abrir_aba_usuarios(page_factory)
+
+    externos = [
+        url for _, url in page.responses
+        if not url.startswith(("http://127.0.0.1", "http://localhost", "data:", "blob:"))
+    ]
+    assert not externos, f"a página buscou recurso externo: {externos}"
+
+
+def test_assets_locais_carregam_sem_404(page_factory):
+    page = _abrir_aba_usuarios(page_factory)
+
+    falhas = [
+        (status, url) for status, url in page.responses
+        if status >= 400 and "/static/" in url
+    ]
+    assert not falhas, f"asset local faltando: {falhas}"
+
+    servidos = [url for _, url in page.responses if "/static/vendor/" in url]
+    assert any("inter" in u for u in servidos), "fonte Inter local não foi carregada"
+    assert any("fontawesome" in u for u in servidos), "Font Awesome local não foi carregado"

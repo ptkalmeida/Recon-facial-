@@ -4,8 +4,8 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import Field, validator
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load .env file first
 env_path = Path(__file__).parent.parent / ".env"
@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     
     # CORS
     allowed_origins: str = Field(default="http://localhost:8001,http://127.0.0.1:8001")
+
+    # Proxies reversos confiáveis (lista separada por vírgula), cujos cabeçalhos
+    # X-Forwarded-For / X-Real-IP podem ser levados a sério para identificar o
+    # cliente. VAZIO por padrão de propósito: confiar nesses cabeçalhos vindos de
+    # qualquer origem permite furar o rate limit de login trocando o cabeçalho a
+    # cada tentativa — brute force sem limite. Só preencha com o IP do seu
+    # nginx/Traefik/load balancer.
+    trusted_proxies: str = ""
     
     # Rate Limiting
     rate_limit_max_requests: int = 100
@@ -68,6 +76,13 @@ class Settings(BaseSettings):
     face_recognition_confirmation_window_seconds: float = 2.5
     face_recognition_confirmation_min_frames: int = 3
     
+    # Porta física (controle de acesso)
+    door_min_confidence: float = 0.8
+    # Exige sinal de vivacidade para acionar a porta. A checagem é modesta (barra
+    # imagem estática, não ataque de apresentação elaborado - ver SECURITY.md),
+    # mas antes o resultado dela era simplesmente descartado.
+    door_require_liveness: bool = True
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/face_recognition.log"
@@ -88,13 +103,15 @@ class Settings(BaseSettings):
     server_camera_id: str = "server-cam"
     server_camera_interval_seconds: float = 1.0
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "allow"
-        case_sensitive = False
-    
-    @validator("jwt_secret_key")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="allow",
+        case_sensitive=False,
+    )
+
+    @field_validator("jwt_secret_key")
+    @classmethod
     def validate_jwt_secret(cls, v):
         if not v and os.getenv("ENVIRONMENT") == "production":
             raise ValueError("JWT_SECRET_KEY must be set in production environment")
@@ -102,7 +119,8 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET_KEY must be at least 32 characters long")
         return v
     
-    @validator("admin_password")
+    @field_validator("admin_password")
+    @classmethod
     def validate_admin_password(cls, v):
         if not v:
             return v
@@ -125,6 +143,12 @@ yaml_config = load_yaml_config()
 
 # Merge with environment variables (env vars take precedence)
 settings = Settings()
+
+def get_trusted_proxies() -> set[str]:
+    """Peers cujos cabeçalhos de IP encaminhado podem ser confiados."""
+    raw = settings.trusted_proxies or ""
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
 
 def get_cors_origins() -> list[str]:
     """Parse CORS origins from comma-separated string."""
@@ -170,6 +194,10 @@ settings_dict = {
         "auth_max_attempts": settings.auth_max_attempts,
         "auth_block_duration": settings.auth_block_duration,
         "cors_origins": get_cors_origins()
+    },
+    "door": {
+        "min_confidence": settings.door_min_confidence,
+        "require_liveness": settings.door_require_liveness
     },
     "logging": {
         "level": settings.log_level,

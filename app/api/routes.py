@@ -56,6 +56,12 @@ camera_worker = None
 CONFIRMATION_WINDOW_SECONDS = settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
 CONFIRMATION_MIN_FRAMES = settings_dict.get("face_recognition", {}).get("confirmation_min_frames", 3)
 
+# Condições para acionar a porta física. Antes: 0.8 fixo no meio da função, e a
+# vivacidade era ignorada por completo.
+_door = settings_dict.get("door", {})
+DOOR_OPEN_MIN_CONFIDENCE = _door.get("min_confidence", 0.8)
+REQUIRE_LIVENESS_FOR_DOOR = _door.get("require_liveness", True)
+
 
 def cleanup_internal_states():
     """Clean up expired entries from internal tracking dictionaries to prevent memory leaks."""
@@ -391,10 +397,36 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                 )
 
             # --- INTEGRAÇÃO COM A PORTA ---
-            # Abre a porta se a confiança for maior que o definido (ex: 80%)
-            if detection.get("match_confidence", 0) > 0.8:
-                logger.info(f"Usuário {detection['user_name']} reconhecido. Abrindo porta...")
-                door_manager.open_door(duration=5)
+            # Duas condições, não uma: confiança suficiente E sinal de vivacidade.
+            #
+            # A checagem de vivacidade era calculada e jogada fora — a porta abria
+            # só por match_confidence. Uma foto impressa que produzisse match
+            # confiante abria a porta física, com o resultado do anti-spoofing
+            # descartado. É um filtro modesto (só barra imagem 100% estática, ver
+            # SECURITY.md), mas ignorá-lo era pior que não tê-lo.
+            confidence = detection.get("match_confidence", 0)
+            is_live = detection.get("is_live", True)
+
+            if confidence <= DOOR_OPEN_MIN_CONFIDENCE:
+                continue
+
+            if REQUIRE_LIVENESS_FOR_DOOR and not is_live:
+                logger.warning(
+                    "Porta NÃO aberta para %s: confiança %.2f suficiente, mas sem "
+                    "sinal de vivacidade (possível foto/vídeo apresentado à câmera).",
+                    detection.get("user_name"), confidence,
+                )
+                db_manager.log_access(
+                    user_id=detected_user_id,
+                    action="door_blocked_no_liveness",
+                    status="blocked",
+                    camera_source=camera_id,
+                    confidence=confidence,
+                )
+                continue
+
+            logger.info(f"Usuário {detection['user_name']} reconhecido. Abrindo porta...")
+            door_manager.open_door(duration=5)
             # ------------------------------
         else:
             db_manager.log_access(

@@ -77,6 +77,16 @@ middleware dedicado (`GeneralRateLimitMiddleware`) a todas as rotas `/api/*`, ex
 - Limite de tamanho de requisição (10MB por padrão).
 - Rate limiting por rota (ver ressalva acima sobre a API geral).
 - Rastreamento de requisições por IP e por usuário.
+- **Identificação de IP à prova de spoofing**: `X-Forwarded-For`/`X-Real-IP` só são
+  levados em conta quando a conexão vem de um endereço declarado em `TRUSTED_PROXIES`
+  (vazio por padrão). Antes eram aceitos de qualquer origem — e como esse valor é a
+  chave do rate limiter, bastava mandar um IP diferente por tentativa para anular o
+  limite de 5 tentativas de login, permitindo brute force ilimitado contra o único
+  login do sistema. Coberto por `tests/test_client_ip_spoofing.py`.
+
+  > Se você roda atrás de nginx/Traefik/load balancer, preencha `TRUSTED_PROXIES`
+  > com o IP do proxy — senão todas as requisições serão contadas como vindas dele,
+  > e um cliente abusivo consumirá a cota de todos.
 - Toda consulta ao banco passa pelo ORM (SQLAlchemy) com parâmetros vinculados — não há
   concatenação de SQL em nenhum ponto do código.
 - Respostas de erro 500 não incluem a mensagem da exceção interna.
@@ -138,12 +148,12 @@ Permissions-Policy: camera=(self), microphone=(), ...
 Strict-Transport-Security: max-age=31536000 (apenas em produção)
 ```
 
-`style-src` e `font-src` incluem `https://fonts.googleapis.com`,
-`https://fonts.gstatic.com` e `https://cdnjs.cloudflare.com`: os templates carregam a
-fonte Inter e os ícones do Font Awesome desses CDNs. Sem eles no allowlist o navegador
-bloqueava as folhas de estilo e as páginas ficavam sem ícone nenhum — regressão
-introduzida junto com o CSP e detectada só depois, pelos testes de navegador. Nenhum dos
-dois entra em `script-src`.
+**Nenhum domínio externo no allowlist.** A fonte Inter e os ícones do Font Awesome são
+servidos de `app/static/vendor/` (baixados por `scripts/vendor_assets.py`). Antes vinham
+de `fonts.googleapis.com` e `cdnjs.cloudflare.com`, o que significava (a) interface sem
+ícone nenhum quando a rede local não tem internet — situação normal num sistema
+on-premise — e (b) um terceiro servindo CSS para a tela administrativa. Coberto por
+`tests/browser/test_xss_escaping.py`, que reprova qualquer requisição a host externo.
 
 `script-src` não usa mais `'unsafe-inline'`/`'unsafe-eval'` — cada resposta gera um nonce
 aleatório (`app/security/middleware.py`), e só a tag `<script>` das páginas do dashboard
@@ -171,6 +181,21 @@ allow_origins=["http://localhost:8001", "https://seudominio.com"]
 **Anti-spoofing**:
 - Checagem de vivacidade por análise de movimento entre frames consecutivos da mesma
   câmera (diferença de pixel na região do rosto).
+- **A vivacidade agora é aplicada, não só calculada.** A porta física exige duas
+  condições: `match_confidence > DOOR_MIN_CONFIDENCE` (0.8) **e** sinal de vivacidade.
+  Até esta versão o campo `is_live` era computado, devolvido na resposta da API e
+  ignorado — a porta abria só por confiança, então uma foto impressa que produzisse
+  match confiante abria a porta com o resultado do anti-spoofing descartado.
+  Tentativas bloqueadas ficam registradas como `door_blocked_no_liveness` na trilha de
+  auditoria. Configurável por `DOOR_REQUIRE_LIVENESS` (padrão `true`) e coberto por
+  `tests/test_door_liveness.py`.
+
+**Reconhecimento sem backend de modelo**:
+- Se nenhuma biblioteca de reconhecimento estiver instalada, o serviço **recusa o
+  rosto** em vez de gerar um "embedding" por histograma de intensidade, que não
+  identifica pessoa e num controle de acesso poderia liberar a porta para quem não é.
+  O comportamento antigo só volta com `ALLOW_INSECURE_HOG_EMBEDDINGS=true`, e mesmo
+  assim com aviso a cada extração. Ver `requirements-recognition.txt`.
 
 > **Limitação deliberada e permanente**: essa checagem **não é** uma prevenção real de
 > replay attack, e não pretende ser. Um vídeo ou foto exibido na tela de um celular também

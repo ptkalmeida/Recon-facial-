@@ -64,18 +64,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # (inline style attributes are used throughout the templates; XSS risk via
         # style is much lower than via script).
         #
-        # Os dois CDNs abaixo são carregados por app/templates/*.html (fonte Inter e
-        # ícones Font Awesome). Sem eles no allowlist, o navegador bloqueia as
-        # folhas de estilo e as páginas ficam sem ícone nenhum - regressão que o
-        # teste de navegador (tests/browser/test_xss_escaping.py) pegou. Nenhum
-        # deles entra em script-src: só estilo e fonte.
+        # Nenhum domínio externo no allowlist: a fonte Inter e os ícones do Font
+        # Awesome são servidos de app/static/vendor/ (ver scripts/vendor_assets.py).
+        # Antes vinham de fonts.googleapis.com e cdnjs.cloudflare.com, o que
+        # significava interface sem ícone nenhum quando a rede local não tem
+        # internet, e um terceiro servindo CSS para a tela administrativa.
         csp = (
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
-            "style-src 'self' 'unsafe-inline' "
-            "https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
-            "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+            "font-src 'self'; "
             "connect-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "

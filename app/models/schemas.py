@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -38,7 +38,8 @@ class UserCreate(UserBase):
     # A validação vive só nos schemas de entrada: `UserResponse` também herda de
     # `UserBase` e não pode falhar ao serializar um nome legado gravado antes
     # desta regra existir.
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def _check_name(cls, v):
         return validate_person_name(v)
 
@@ -49,7 +50,8 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
-    @validator("name")
+    @field_validator("name")
+    @classmethod
     def _check_name(cls, v):
         return v if v is None else validate_person_name(v)
 
@@ -66,8 +68,7 @@ class UserResponse(UserBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EmbeddingData(BaseModel):
@@ -78,7 +79,7 @@ class EmbeddingData(BaseModel):
 class RegisterUserRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     email: Optional[EmailStr] = None
-    images: List[str] = Field(..., min_items=1)
+    images: List[str] = Field(..., min_length=1)
     role: str = "user"
 
 
@@ -101,8 +102,7 @@ class AccessLogResponse(BaseModel):
     confidence: Optional[float] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PresenceResponse(BaseModel):

@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Face Recognition Pro 3.0</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/vendor/inter/inter.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -983,28 +983,39 @@
             offscreenCanvas.height = video.videoHeight;
             const offscreenCtx = offscreenCanvas.getContext('2d');
 
-            detectionInterval = setInterval(async () => {
-                if (!stream) return;
+            // `detectionInFlight` evita empilhar requisições: o intervalo é de
+            // 800ms mas o servidor leva ~0,9s por frame (InsightFace em CPU).
+            // Sem esse guarda, cada disparo do setInterval enfileira um novo
+            // POST independentemente do anterior ter terminado — a fila cresce
+            // sem limite, a latência aumenta junto e o rate limiter acaba
+            // bloqueando o próprio dashboard.
+            let detectionInFlight = false;
 
-                offscreenCtx.drawImage(video, 0, 0);
-                const blob = await new Promise(resolve => offscreenCanvas.toBlob(resolve, 'image/jpeg', 0.8));
-                
-                const formData = new FormData();
-                formData.append('image', blob, 'frame.jpg');
+            detectionInterval = setInterval(async () => {
+                if (!stream || detectionInFlight) return;
+                detectionInFlight = true;
 
                 try {
+                    offscreenCtx.drawImage(video, 0, 0);
+                    const blob = await new Promise(resolve => offscreenCanvas.toBlob(resolve, 'image/jpeg', 0.8));
+
+                    const formData = new FormData();
+                    formData.append('image', blob, 'frame.jpg');
+
                     const res = await fetch('/api/recognition/detect', {
                         method: 'POST',
                         headers: { 'Authorization': 'Bearer ' + token },
                         body: formData
                     });
-                    
+
                     if (res.ok) {
                         const data = await res.json();
                         drawDetections(data.detections);
                     }
                 } catch (e) {
                     console.error("Erro na Detecção remota:", e);
+                } finally {
+                    detectionInFlight = false;
                 }
             }, 800);
         }

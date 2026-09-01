@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monitoramento 24/7 - Face Recognition Pro 3.0</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/vendor/inter/inter.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -738,9 +738,15 @@
             const offscreenCanvas = document.createElement('canvas');
             const offscreenCtx = offscreenCanvas.getContext('2d');
             
+            // Ver dashboard.html: sem este guarda, o setInterval enfileira um POST
+            // novo a cada disparo mesmo com o anterior em voo (o servidor leva
+            // ~0,9s por frame), e a fila cresce sem limite.
+            let detectionInFlight = false;
+
             detectionInterval = setInterval(async () => {
-                if (!stream || !video.videoWidth) return;
-                
+                if (!stream || !video.videoWidth || detectionInFlight) return;
+                detectionInFlight = true;
+
                 // FPS Counter
                 frameCount++;
                 const now = Date.now();
@@ -772,9 +778,11 @@
                     }
                 } catch (e) {
                     console.error('Erro na detecção:', e);
+                } finally {
+                    detectionInFlight = false;
                 }
-                
-            }, 500); // 2 FPS for server processing
+
+            }, 500); // dispara a cada 500ms, mas só envia se o anterior terminou
         }
         
         function processDetections(data) {

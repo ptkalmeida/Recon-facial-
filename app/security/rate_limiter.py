@@ -191,22 +191,34 @@ recognition_rate_limiter = RateLimiter(
 
 
 def get_client_ip(request) -> str:
-    """Extract client IP from request, handling proxies."""
-    # Check for forwarded headers (for proxied requests)
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Get the first IP in the chain (original client)
-        return forwarded.split(",")[0].strip()
-    
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-    
-    # Fallback to direct connection
-    if hasattr(request, 'client') and request.client:
-        return request.client.host
-    
-    return "unknown"
+    """IP do cliente, honrando cabeçalhos de proxy SÓ se o peer for confiável.
+
+    Antes, `X-Forwarded-For` era aceito de qualquer origem. Como esse valor é a
+    chave do rate limiter, qualquer cliente podia mandar um IP diferente a cada
+    requisição e furar por completo o limite de 5 tentativas de login — brute
+    force ilimitado contra o único login do sistema.
+
+    Agora o cabeçalho só vale quando a conexão vem de um endereço listado em
+    `TRUSTED_PROXIES` (vazio por padrão: sem proxy declarado, vale o IP real da
+    conexão, que o cliente não escolhe).
+    """
+    from app.config import get_trusted_proxies
+
+    peer = None
+    if hasattr(request, "client") and request.client:
+        peer = request.client.host
+
+    if peer and peer in get_trusted_proxies():
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            # Primeiro da cadeia = cliente original.
+            return forwarded.split(",")[0].strip()
+
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
+
+    return peer or "unknown"
 
 
 def create_rate_limit_key(endpoint: str, client_ip: str, user_id: str | None = None) -> str:

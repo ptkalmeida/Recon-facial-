@@ -38,6 +38,11 @@ docs/security-audit/.venv-audit/
 # Clone de referencia de anthropics/skills - repo de terceiros, com .git proprio
 anthropic-skills/
 
+# Material de referencia que nao faz parte da aplicacao - fica em disco, fora do
+# repositorio (mesmo critério de skills/ e anthropic-skills/)
+EPI-Detect-main/
+documento de *funcionalidades*.txt
+
 # IDE
 .vscode/
 
