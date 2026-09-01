@@ -5,7 +5,11 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 # Load .env file first
 env_path = Path(__file__).parent.parent / ".env"
@@ -83,9 +87,13 @@ class Settings(BaseSettings):
     # mas antes o resultado dela era simplesmente descartado.
     door_require_liveness: bool = True
 
-    # Logging
+    # Logging. Os quatro campos eram configuração morta: main.py chamava
+    # logging.basicConfig() com nível fixo e sem handler de arquivo, então
+    # LOG_LEVEL não tinha efeito e a aplicação nunca escrevia log em disco.
     log_level: str = "INFO"
     log_file: str = "logs/face_recognition.log"
+    log_max_size_mb: int = 10
+    log_backup_count: int = 5
 
     # Email alerts (unknown face detected)
     alerts_enabled: bool = False
@@ -109,6 +117,24 @@ class Settings(BaseSettings):
         extra="allow",
         case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings,
+        dotenv_settings, file_secret_settings,
+    ):
+        """Ordem de precedência: o primeiro da tupla ganha.
+
+        config.yaml entra ABAIXO do ambiente: quem publica define o segredo e os
+        ajustes de produção por variável, e o YAML serve de base versionada.
+        """
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSource(settings_cls),
+            file_secret_settings,
+        )
 
     @field_validator("jwt_secret_key")
     @classmethod
@@ -138,10 +164,112 @@ def load_yaml_config(config_path: str = "config.yaml") -> dict[str, Any]:
     return {}
 
 
-# Load YAML config (non-sensitive settings)
-yaml_config = load_yaml_config()
+# ---------------------------------------------------------------------------
+# config.yaml como fonte de configuração de verdade
+# ---------------------------------------------------------------------------
+# Antes: o YAML era carregado em `yaml_config` e nunca usado, e `settings_dict`
+# saía só de `Settings` (defaults do código + .env). Editar config.yaml não tinha
+# efeito nenhum — o arquivo dizia `threshold: 0.3` enquanto o valor em uso era
+# 0.4. Agora ele é uma fonte real, com precedência abaixo do ambiente:
+#
+#     init > variável de ambiente > .env > config.yaml > default do código
+#
+# O YAML é aninhado e `Settings` é plano, então o mapeamento é explícito. Um
+# mapeamento gerado por convenção esconderia justamente o tipo de divergência
+# que causou o problema original.
+YAML_TO_FIELD: dict[tuple[str, ...], str] = {
+    ("app_name",): "app_name",
+    ("version",): "version",
+    ("server", "host"): "host",
+    ("server", "port"): "port",
+    ("server", "reload"): "reload",
+    ("database", "path"): "database_path",
+    ("face_recognition", "model"): "face_model",
+    ("face_recognition", "detector"): "face_detector",
+    ("face_recognition", "distance_metric"): "face_distance_metric",
+    ("face_recognition", "threshold"): "face_threshold",
+    ("face_recognition", "enforce_detection"): "face_enforce_detection",
+    ("face_recognition", "detector_threshold"): "face_detector_threshold",
+    ("face_recognition", "align"): "face_align",
+    ("face_recognition", "normalization"): "face_normalization",
+    ("face_recognition", "min_sharpness"): "face_min_sharpness",
+    ("face_recognition", "log_cooldown_seconds"): "face_recognition_log_cooldown_seconds",
+    ("face_recognition", "confirmation_window_seconds"): "face_recognition_confirmation_window_seconds",
+    ("face_recognition", "confirmation_min_frames"): "face_recognition_confirmation_min_frames",
+    ("face_recognition", "allow_insecure_hog_embeddings"): "allow_insecure_hog_embeddings",
+    ("door", "min_confidence"): "door_min_confidence",
+    ("door", "require_liveness"): "door_require_liveness",
+    ("logging", "level"): "log_level",
+    ("logging", "log_file"): "log_file",
+    ("logging", "max_size_mb"): "log_max_size_mb",
+    ("logging", "backup_count"): "log_backup_count",
+    ("security", "jwt_algorithm"): "jwt_algorithm",
+    ("security", "access_token_expire_minutes"): "access_token_expire_minutes",
+    ("security", "rate_limit_max_requests"): "rate_limit_max_requests",
+    ("security", "rate_limit_window_seconds"): "rate_limit_window_seconds",
+    ("security", "auth_max_attempts"): "auth_max_attempts",
+    ("security", "auth_block_duration"): "auth_block_duration",
+    ("security", "trusted_proxies"): "trusted_proxies",
+    ("server_camera", "enabled"): "server_camera_enabled",
+    ("server_camera", "source"): "server_camera_source",
+    ("server_camera", "camera_id"): "server_camera_id",
+    ("server_camera", "interval_seconds"): "server_camera_interval_seconds",
+}
 
-# Merge with environment variables (env vars take precedence)
+#: Seções que o código lê direto do dicionário e que não têm campo em `Settings`
+#: (ajuste fino, nada sensível). Passam do YAML para `settings_dict` como estão.
+YAML_PASSTHROUGH_SECTIONS = ("anti_spoofing", "presence", "video", "export", "cameras")
+
+#: Chaves do YAML deliberadamente ignoradas, para o aviso de chave desconhecida
+#: não gritar sobre elas.
+YAML_IGNORED = {("database", "type"), ("database", "echo")}
+
+
+def _flatten_yaml(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Traduz o YAML aninhado para os nomes planos de `Settings`.
+
+    Devolve também a lista de chaves não reconhecidas, para avisar em vez de
+    ignorar em silêncio — foi o silêncio que deixou a divergência passar.
+    """
+    plano: dict[str, Any] = {}
+    desconhecidas: list[str] = []
+
+    def caminhar(prefixo: tuple[str, ...], no: Any) -> None:
+        if not isinstance(no, dict):
+            return
+        for chave, valor in no.items():
+            atual = prefixo + (chave,)
+            if atual in YAML_IGNORED or atual[0] in YAML_PASSTHROUGH_SECTIONS:
+                continue
+            campo = YAML_TO_FIELD.get(atual)
+            if campo:
+                plano[campo] = valor
+            elif isinstance(valor, dict):
+                caminhar(atual, valor)
+            elif atual == ("security", "cors_origins"):
+                # Lista no YAML, string separada por vírgula em Settings.
+                plano["allowed_origins"] = ",".join(str(o) for o in valor or [])
+            else:
+                desconhecidas.append(".".join(atual))
+
+    caminhar((), data)
+    return plano, desconhecidas
+
+
+class YamlConfigSource(PydanticBaseSettingsSource):
+    """Fonte de configuração lendo config.yaml, abaixo do ambiente na precedência."""
+
+    def __init__(self, settings_cls):
+        super().__init__(settings_cls)
+        self._valores, self.chaves_desconhecidas = _flatten_yaml(load_yaml_config())
+
+    def get_field_value(self, field, field_name):  # pragma: no cover - exigido pela ABC
+        return self._valores.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return dict(self._valores)
+
+
 settings = Settings()
 
 def get_trusted_proxies() -> set[str]:
@@ -201,6 +329,8 @@ settings_dict = {
     },
     "logging": {
         "level": settings.log_level,
+        "max_size_mb": settings.log_max_size_mb,
+        "backup_count": settings.log_backup_count,
         "log_file": settings.log_file
     },
     "alerts": {
@@ -220,6 +350,16 @@ settings_dict = {
         "interval_seconds": settings.server_camera_interval_seconds
     }
 }
+
+# Seções de ajuste fino que existem só no config.yaml (sem campo em `Settings`) e
+# que o código lê direto deste dicionário: `presence.timeout_seconds` em
+# app/database/db.py e `anti_spoofing` em app/services/face_recognition.py.
+# Ficavam de fora, então essas leituras sempre caíam no default e editar o YAML
+# não surtia efeito.
+_yaml_bruto = load_yaml_config()
+for _secao in YAML_PASSTHROUGH_SECTIONS:
+    if _secao in _yaml_bruto:
+        settings_dict[_secao] = _yaml_bruto[_secao]
 
 
 def load_config(config_path: str = "config.yaml") -> dict[str, Any]:

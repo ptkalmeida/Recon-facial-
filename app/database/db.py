@@ -441,19 +441,10 @@ class DatabaseManager:
 
 
 
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
-    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), config_path)
-    if os.path.exists(config_file):
-        with open(config_file, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    return {}
+# Fonte única de configuração: este módulo carregava config.yaml por conta
+# própria, em paralelo a app/config.py, e as duas leituras discordavam (o YAML
+# ignorava DATABASE_PATH do ambiente). Agora tudo vem de app.config, onde a
+# precedência é ambiente > .env > config.yaml > default.
+from app.config import settings, settings_dict  # noqa: E402
 
-
-settings_dict = load_config()
-
-# DATABASE_PATH (.env) tem precedência sobre config.yaml - antes o caminho vinha só
-# do YAML, então apontar o banco por variável de ambiente não tinha efeito nenhum e
-# qualquer script acabava escrevendo no banco de produção.
-_yaml_db_path = settings_dict.get("database", {}).get("path", "data/face_recognition.db")
-_db_path = os.getenv("DATABASE_PATH") or _yaml_db_path
-db_manager = DatabaseManager(_db_path)
+db_manager = DatabaseManager(settings.database_path)

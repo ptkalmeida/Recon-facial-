@@ -126,6 +126,24 @@ openssl rand -base64 32
 
 ⚠️ **AVISO**: Não armazene segredos no `config.yaml`! Use o arquivo `.env` para todas as configurações sensíveis.
 
+**Precedência de configuração:**
+
+```
+variável de ambiente  >  .env  >  config.yaml  >  default do código
+```
+
+Use o `config.yaml` para a configuração versionada da instalação e o `.env`
+para segredos e ajustes por máquina. O mapeamento entre o formato aninhado do
+YAML e os campos de `Settings` é explícito (`YAML_TO_FIELD` em
+[app/config.py](app/config.py)); chave não mapeada é reportada, não ignorada em
+silêncio, e há teste que reprova chave órfã.
+
+> Até a versão anterior este arquivo era decorativo: o YAML era carregado e
+> nunca usado, então editá-lo não surtia efeito — o arquivo dizia
+> `threshold: 0.3` enquanto o valor real era 0.4. O `app/database/db.py` ainda
+> o carregava em paralelo, com regras próprias. Hoje há uma fonte só.
+
+
 Para detalhes completos de segurança, consulte [SECURITY.md](SECURITY.md).
 
 ```yaml
@@ -134,34 +152,38 @@ version: "3.0.0"
 
 server:
   host: "0.0.0.0"
-  port: 8000
-  reload: true
+  port: 8001
+  reload: false
 
 database:
-  type: "sqlite"
-  path: "data/face_recognition.db"
+  path: "data/face_recognition.db"   # sobreposto por DATABASE_PATH
 
 face_recognition:
-  model: "Facenet512"      # Modelo de embedding
-  detector: "retina"       # Detector de rosto (retina, mtcnn, opencv)
+  model: "Facenet512"        # usado só no caminho DeepFace; ignorado com InsightFace
+  detector: "retinaface"
   distance_metric: "cosine"
-  threshold: 0.4           # Limite de confiança (0-1, menor = mais rigoroso)
+  threshold: 0.4             # validado com fotos reais (ver acima)
+  min_sharpness: 40          # nitidez mínima para aceitar o rosto
+  confirmation_min_frames: 3 # quadros para confirmar antes de registrar
+  allow_insecure_hog_embeddings: false
 
-anti_spoofing:
-  enabled: true
-  blink_detection: true
-
-video:
-  default_source: 0       # 0 = webcam padrão
-  fps_limit: 30
+door:                        # porta física
+  min_confidence: 0.8
+  require_liveness: true     # exige vivacidade, não só confiança
 
 presence:
-  timeout_seconds: 60      # Tempo para considerar ausente
+  timeout_seconds: 60
+
+logging:
+  level: "INFO"
+  log_file: "logs/face_recognition.log"
+  max_size_mb: 10            # rotação
+  backup_count: 5
 
 security:
-  jwt_secret: "sua-chave-secreta-aqui"
-  admin_username: "admin"
-  # Configure a senha real no .env, nunca no config.yaml
+  auth_max_attempts: 5
+  trusted_proxies: ""        # IPs de proxy que podem enviar X-Forwarded-For
+  # Segredos NUNCA aqui: JWT_SECRET_KEY e ADMIN_PASSWORD vão no .env
 ```
 
 ---
@@ -175,9 +197,9 @@ python main.py
 ```
 
 O sistema estará disponível em:
-- **Dashboard:** http://localhost:8000/dashboard
-- **Documentação API:** http://localhost:8000/docs
-- **Página inicial:** http://localhost:8000
+- **Dashboard:** http://localhost:8001/dashboard
+- **Documentação API:** http://localhost:8001/docs
+- **Página inicial:** http://localhost:8001
 
 ### Credenciais de Administrador
 
@@ -190,10 +212,10 @@ Defina `ADMIN_USERNAME` e `ADMIN_PASSWORD` no arquivo `.env` antes de iniciar o 
 ## Funcionalidades
 
 ### 1. Motor de Reconhecimento Facial
-- ✅ Utiliza DeepFace com modelo Facenet512
-- ✅ Embeddings faciais de alta precisão
-- ✅ Suporte a barba, óculos, variações de ângulo e iluminação
-- ✅ Comparação por similaridade cosseno
+- ✅ InsightFace `buffalo_l` (ArcFace, embeddings de 512 dimensões) via onnxruntime
+- ✅ DeepFace/Facenet512 como alternativa (exige TensorFlow, e portanto Python ≤ 3.13)
+- ✅ Comparação por distância de cosseno, limiar validado com fotos reais
+- ✅ Estado real do backend exposto em `GET /api/health` (`recognition.degraded`)
 
 ### 2. Detecção Facial
 - ✅ RetinaFace (recomendado) - alta precisão
@@ -201,9 +223,12 @@ Defina `ADMIN_USERNAME` e `ADMIN_PASSWORD` no arquivo `.env` antes de iniciar o 
 - ✅ Fallback para OpenCV Haar Cascade
 
 ### 3. Anti-Spoofing
-- ✅ Detecção de vivacidade (liveness)
-- ✅ Verificação de piscadas
-- ✅ Análise de movimento
+- ✅ Checagem de vivacidade por movimento entre quadros consecutivos
+- ✅ Exigida para acionar a porta física (`DOOR_REQUIRE_LIVENESS`), com a
+  tentativa bloqueada registrada em auditoria
+- ⚠️ **Filtro modesto**: barra foto 100% estática, não ataque de apresentação
+  planejado (vídeo em tela passa). Ver SECURITY.md — não há detecção de piscada,
+  moiré, textura ou profundidade.
 
 ### 4. Cadastro de Pessoas
 - ✅ Interface web para cadastro

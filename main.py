@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 project_root = Path(__file__).parent
@@ -28,10 +29,47 @@ from app.security.middleware import (
 from app.security.rate_limiter import api_rate_limiter
 from app.services.camera_worker import CameraWorker, resolve_camera_source
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+def setup_logging() -> None:
+    """Configura o logging a partir das settings (nível + console + arquivo rotativo).
+
+    Antes era `logging.basicConfig(level=logging.INFO, format=...)`: o nível era
+    fixo — `LOG_LEVEL` não tinha efeito — e não havia handler de arquivo, então a
+    aplicação nunca escrevia log em disco. Num sistema de controle de acesso isso
+    significa perder o log operacional ao fechar o console.
+    """
+    nivel = getattr(logging, str(settings.log_level).upper(), logging.INFO)
+    formato = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+
+    raiz = logging.getLogger()
+    raiz.setLevel(nivel)
+    for handler in list(raiz.handlers):
+        raiz.removeHandler(handler)
+
+    console = logging.StreamHandler()
+    console.setFormatter(formato)
+    raiz.addHandler(console)
+
+    try:
+        caminho = Path(settings.log_file)
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        arquivo = RotatingFileHandler(
+            caminho,
+            maxBytes=settings.log_max_size_mb * 1024 * 1024,
+            backupCount=settings.log_backup_count,
+            encoding="utf-8",
+        )
+        arquivo.setFormatter(formato)
+        raiz.addHandler(arquivo)
+    except (OSError, ValueError) as e:
+        # Disco cheio, permissão, caminho inválido: seguir só com console é
+        # melhor que não subir. `ValueError` entra na lista porque caminho com
+        # caractere nulo levanta ValueError, não OSError.
+        raiz.warning("Não foi possível abrir %s para log: %s", settings.log_file, e)
+
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager

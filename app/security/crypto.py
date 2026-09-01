@@ -30,7 +30,7 @@ try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     HAS_CRYPTOGRAPHY = True
-except ImportError:  # pragma: no cover - cryptography vem via python-jose[cryptography]
+except ImportError:  # pragma: no cover - `cryptography` é dependência declarada
     HAS_CRYPTOGRAPHY = False
 
 PBKDF2_ITERATIONS = 480_000

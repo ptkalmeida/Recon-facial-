@@ -6,21 +6,21 @@
 # See .env.example for reference
 #
 # ==========================================
-# ATENCAO - QUASE NADA AQUI E LIDO
+# PRECEDENCIA DE CONFIGURACAO
 # ==========================================
-# `app/config.py` monta `settings_dict` exclusivamente a partir da classe
-# `Settings` (defaults do codigo + variaveis do .env). O YAML e carregado em
-# `yaml_config` e nunca usado. Consequencia pratica: editar valores aqui NAO tem
-# efeito nenhum. Exemplo real: `threshold: 0.3` abaixo, enquanto o valor em uso e
-# 0.4 (o default de `face_threshold` em app/config.py).
+#   variavel de ambiente  >  .env  >  ESTE ARQUIVO  >  default do codigo
 #
-# A UNICA chave efetivamente lida e `database.path`, e so porque
-# `app/database/db.py` carrega este arquivo por conta propria - e mesmo essa
-# perde para a variavel de ambiente DATABASE_PATH.
+# Ou seja: o que esta aqui vale de verdade, mas o ambiente sobrepoe. Use este
+# arquivo para a configuracao versionada da instalacao e o .env para segredos e
+# ajustes por maquina.
 #
-# Para mudar configuracao de verdade, use o .env (ver .env.example).
-# Este arquivo esta mantido como documentacao do formato pretendido; unificar as
-# duas fontes de configuracao e uma pendencia conhecida.
+# Nem toda chave e lida: app/config.py mantem um mapeamento explicito
+# (YAML_TO_FIELD) do formato aninhado daqui para os campos planos de `Settings`.
+# Chave nao mapeada aparece em `YamlConfigSource.chaves_desconhecidas` em vez de
+# ser ignorada em silencio.
+#
+# Ate a versao anterior este arquivo era decorativo - o YAML era carregado e nunca
+# usado, e `threshold: 0.3` convivia com o valor real 0.4.
 
 app_name: "Face Recognition Pro 3.0"
 version: "3.0.0"
@@ -42,8 +42,11 @@ face_recognition:
   # Detector options: retinaface, mtcnn, opencv, ssd, dlib
   detector: "retinaface"
   distance_metric: "cosine"
-  # Threshold for face matching (0-1, lower = stricter)
-  threshold: 0.3
+  # Distancia maxima de cosseno para considerar a mesma pessoa.
+  # Validado com fotos reais no backend insightface/buffalo_l: mesma pessoa em
+  # fotos diferentes deu 0.18; pessoas diferentes, 0.86 e 0.90. 0.4 fica no meio
+  # com margem dos dois lados.
+  threshold: 0.4
   enforce_detection: true
   detector_threshold: 0.7
   # Image normalization
@@ -56,6 +59,20 @@ face_recognition:
   confirmation_window_seconds: 2.5
   # Minimum recognized frames in the window before logging access
   confirmation_min_frames: 3
+  # Nitidez minima (variancia do Laplaciano) para aceitar um rosto. 100 recusava
+  # captura de webcam utilizavel; 40 foi calibrado com fotos reais.
+  min_sharpness: 40
+  # Fallback de 'embedding' por histograma: NAO identifica pessoa. Manter false.
+  allow_insecure_hog_embeddings: false
+
+# Porta fisica (controle de acesso)
+door:
+  # Confianca minima do match para acionar a porta.
+  min_confidence: 0.8
+  # Exige sinal de vivacidade junto da confianca. Antes o campo is_live era
+  # calculado e ignorado, e a porta abria so por confianca - uma foto impressa
+  # com match confiante abria a porta.
+  require_liveness: true
 
 anti_spoofing:
   enabled: true
@@ -100,6 +117,10 @@ security:
   rate_limit_window_seconds: 60
   auth_max_attempts: 5
   auth_block_duration: 900
+  # IPs de proxies reversos confiaveis, separados por virgula. So desses
+  # enderecos os cabecalhos X-Forwarded-For / X-Real-IP valem para identificar o
+  # cliente; vazio significa usar sempre o IP real da conexao.
+  trusted_proxies: ""
   # CORS - override with ALLOWED_ORIGINS env var
   cors_origins:
     - "http://localhost:8001"

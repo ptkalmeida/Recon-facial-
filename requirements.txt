@@ -28,8 +28,11 @@ pyyaml==6.0.3
 sqlalchemy==2.0.49
 
 # --- Seguranca ---
-python-jose[cryptography]==3.5.0   # JWT (HS256)
-bcrypt==5.0.0                      # hash da senha admin + criptografia do embedding
+PyJWT==2.13.0                      # JWT (HS256) - substituiu python-jose, de
+                                   # manutencao lenta; mesma API para o uso daqui
+cryptography==48.0.0               # Fernet (app/security/crypto.py). Antes vinha
+                                   # de carona no extra python-jose[cryptography]
+bcrypt==5.0.0                      # hash da senha admin
 # passlib removido: ultimo release em 2020, quebra com bcrypt >= 4 e o codigo ja
 # chamava bcrypt direto - o CryptContext em app/security/auth.py estava morto.
 

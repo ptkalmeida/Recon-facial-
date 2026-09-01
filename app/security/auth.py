@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+
+# PyJWT no lugar de python-jose: o python-jose tem manutenção lenta (e arrastava
+# `cryptography` como extra, que agora é dependência declarada por causa de
+# app/security/crypto.py). A API usada aqui é a mesma nos dois; o que muda é o
+# nome da exceção.
+import jwt
+from jwt import PyJWTError
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +79,11 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
 
 def decode_token(token: str) -> dict[str, Any] | None:
     try:
+        # `algorithms` explícito (lista fixa) é o que impede o ataque de troca de
+        # algoritmo — em especial `alg: none` e a confusão HS256/RS256.
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError as e:
+    except PyJWTError as e:
         logger.warning(f"Erro ao decodificar token: {e}")
         return None
 

@@ -48,7 +48,12 @@ produção — ver [docs/API.md](docs/API.md) para o contrato de `/api/health` q
 ### 2. Autenticação e Autorização
 
 **Funcionalidades**:
-- Autenticação baseada em JWT com geração segura de token.
+- Autenticação baseada em JWT (HS256) com **PyJWT**, decodificando sempre com a
+  lista de algoritmos fixa (`algorithms=["HS256"]`) — é isso que barra o ataque de
+  troca de algoritmo, incluindo `alg: none`. Substituiu o `python-jose`, de
+  manutenção lenta, cuja remoção também tirou do projeto as dependências
+  transitivas `ecdsa` e `rsa`. Coberto por `tests/test_jwt_tokens.py`
+  (token expirado, assinatura adulterada, payload forjado, `alg: none`).
 - Validação de força de senha (mínimo 8 caracteres, maiúscula, minúscula, dígito e caractere
   especial) — aplicada tanto na troca de senha (`POST /api/auth/change-password`) quanto na
   senha admin inicial definida via `ADMIN_PASSWORD` no `.env`: em produção, o sistema recusa
@@ -374,6 +379,26 @@ anti-spoofing dedicado.
         faciais são criptografados em repouso (`app/security/crypto.py`).
 - [x] `DATABASE_PATH` do `.env` passou a ter precedência sobre `config.yaml` — antes o
       caminho vinha só do YAML e a variável de ambiente não tinha efeito nenhum.
+- [x] **Vivacidade passou a ser aplicada.** `is_live` era calculado e descartado: a porta
+      abria só por `match_confidence`, então uma foto impressa com match confiante abria
+      a porta física. Agora exige as duas condições, e a tentativa bloqueada vai para a
+      trilha de auditoria como `door_blocked_no_liveness`.
+- [x] **Reconhecimento sem modelo passou a recusar o rosto** em vez de gerar embedding
+      por histograma de intensidade, que não identifica pessoa.
+- [x] **Spoofing de `X-Forwarded-For` fechado** (`TRUSTED_PROXIES`) — antes era possível
+      anular o rate limit de login trocando o cabeçalho a cada tentativa.
+- [x] **Fonte única de configuração**: `config.yaml` era carregado e nunca usado (o
+      arquivo dizia `threshold: 0.3` enquanto o valor real era 0.4) e `db.py` o lia em
+      paralelo com regras próprias. Precedência agora é ambiente > `.env` >
+      `config.yaml` > default, com mapeamento explícito e chave órfã reportada.
+- [x] **Log em disco**: `LOG_LEVEL`/`LOG_FILE` eram configuração morta — o
+      `basicConfig()` fixava o nível e não tinha handler de arquivo, então o log
+      operacional se perdia ao fechar o console. Agora há arquivo rotativo
+      (`LOG_MAX_SIZE_MB`, `LOG_BACKUP_COUNT`) junto do console.
+- [x] **CDNs externos removidos** da interface (fonte e ícones locais), devolvendo o CSP
+      a `style-src`/`font-src 'self'` e permitindo operação sem internet.
+- [x] `passlib` (sem manutenção desde 2020, incompatível com bcrypt >= 4) removido; o
+      `CryptContext` já estava morto no código.
 
 ### Versão 2.0 - Refatoração de Segurança
 - [x] Removidos segredos hardcoded dos arquivos de configuração.
