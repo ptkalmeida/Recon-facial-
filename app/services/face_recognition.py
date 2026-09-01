@@ -83,6 +83,15 @@ class FaceRecognitionService:
         
         self._initialized = False
         self._lock = threading.Lock()
+
+        # Backend REALMENTE em uso, preenchido por initialize(). `model_name`/
+        # `detector_backend` acima são o que foi *pedido* na configuração - se a
+        # biblioteca correspondente não estiver instalada, o serviço cai para um
+        # fallback e os dois valores deixam de descrever a realidade. Sem
+        # registrar isso, /api/health anunciava "Facenet512" enquanto rodava
+        # Haar cascade + histograma.
+        self.detection_backend: str = "não inicializado"
+        self.embedding_backend: str = "não inicializado"
         
         self._known_embeddings: dict[int, np.ndarray] = {}
         self._known_users: dict[int, str] = {}
@@ -91,19 +100,76 @@ class FaceRecognitionService:
         # Frame history per camera for liveness detection
         self._frame_history: dict[str, np.ndarray] = {}
         
+    #: Backend de embedding sem valor biométrico real: `_extract_hog_features()`
+    #: devolve um histograma de intensidade em grade, não um vetor de identidade.
+    #: Comparar isso com limiar de cosseno equivale a comparar textura e
+    #: iluminação — reconhecimento nesse modo não é confiável.
+    HOG_EMBEDDING_BACKEND = "opencv-hog (sem valor biométrico)"
+
+    def _resolve_embedding_backend(self) -> str:
+        """Qual backend `extract_embedding()` vai usar de fato.
+
+        Espelha a ordem de prioridade de `extract_embedding()`. Fica separado de
+        `detection_backend` porque os dois divergem: com MediaPipe, a detecção é
+        MediaPipe mas o embedding cai em HOG.
+        """
+        if self._insightface_app is not None:
+            return "insightface:buffalo_l"
+        if HAS_DEEPFACE:
+            return f"deepface:{self.model_name}"
+        if HAS_FACE_RECOGNITION:
+            return "face_recognition:dlib"
+        return self.HOG_EMBEDDING_BACKEND
+
+    @property
+    def recognition_degraded(self) -> bool:
+        """True quando os embeddings não têm valor biométrico (fallback HOG)."""
+        return self.embedding_backend == self.HOG_EMBEDDING_BACKEND
+
+    def get_backend_info(self) -> dict[str, Any]:
+        """O que está REALMENTE em uso, para /api/health e para o log de startup."""
+        return {
+            "detection_backend": self.detection_backend,
+            "embedding_backend": self.embedding_backend,
+            "configured_model": self.model_name,
+            "configured_detector": self.detector_backend,
+            "degraded": self.recognition_degraded,
+        }
+
+    def _finish_initialization(self, detection_backend: str) -> bool:
+        self.detection_backend = detection_backend
+        self.embedding_backend = self._resolve_embedding_backend()
+        self._initialized = True
+
+        if self.recognition_degraded:
+            logger.error(
+                "RECONHECIMENTO DEGRADADO: detecção via '%s' e embeddings via "
+                "'%s'. A configuração pede '%s'/'%s', mas nenhuma biblioteca de "
+                "reconhecimento (insightface, deepface+tensorflow, "
+                "face_recognition/dlib) está instalada. Os embeddings são "
+                "histogramas de intensidade, não vetores de identidade: o "
+                "sistema NÃO reconhece pessoas de forma confiável neste estado.",
+                detection_backend, self.embedding_backend,
+                self.model_name, self.detector_backend,
+            )
+        else:
+            logger.info(
+                "FaceRecognitionService pronto: detecção via '%s', embeddings via '%s'",
+                detection_backend, self.embedding_backend,
+            )
+        return True
+
     def initialize(self) -> bool:
         global HAS_MEDIAPIPE
         if self._initialized:
             return True
-        
+
         # Priority 0: InsightFace
         if HAS_INSIGHTFACE:
             try:
                 self._insightface_app = FaceAnalysis(name="buffalo_l")
                 self._insightface_app.prepare(ctx_id=0, det_size=(640, 640))
-                self._initialized = True
-                logger.info("FaceRecognitionService initialized with InsightFace (buffalo_l)")
-                return True
+                return self._finish_initialization("insightface:buffalo_l")
             except Exception as e:
                 logger.error(f"Error initializing InsightFace: {e}")
                 self._insightface_app = None
@@ -118,18 +184,14 @@ class FaceRecognitionService:
                     DeepFace.detectFace(test_img, detector_backend=self.detector_backend, enforce_detection=False)
                 except:
                     pass  # Expected to fail on blank image
-                
-                self._initialized = True
-                logger.info(f"FaceRecognitionService initialized with DeepFace ({self.model_name})")
-                return True
+
+                return self._finish_initialization(f"deepface:{self.detector_backend}")
             except Exception as e:
                 logger.error(f"Error initializing DeepFace: {e}")
         
         # Priority 2: face_recognition (dlib)
         if HAS_FACE_RECOGNITION:
-            self._initialized = True
-            logger.info("FaceRecognitionService initialized with face_recognition (dlib)")
-            return True
+            return self._finish_initialization("face_recognition:dlib")
         
         # Priority 3: MediaPipe
         if HAS_MEDIAPIPE:
@@ -137,20 +199,17 @@ class FaceRecognitionService:
                 self.mp_face_detection = mp.solutions.face_detection.FaceDetection(
                     model_selection=1, min_detection_confidence=0.5
                 )
-                self._initialized = True
-                logger.info("FaceRecognitionService initialized with MediaPipe")
-                return True
+                # MediaPipe só detecta: o embedding cai no fallback HOG. É por
+                # isso que _finish_initialization avalia os dois separadamente.
+                return self._finish_initialization("mediapipe")
             except Exception as e:
                 logger.error(f"Error initializing MediaPipe: {e}")
                 HAS_MEDIAPIPE = False
             
         # Fallback 4: OpenCV Haar Cascades
-        logger.warning("Using OpenCV fallback for face detection")
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         self.face_cascade = cv2.CascadeClassifier(cascade_path)
-        self._initialized = True
-        logger.info("FaceRecognitionService using OpenCV Haar Cascade fallback")
-        return True
+        return self._finish_initialization("opencv-haar")
     
     def load_known_faces(self, embeddings_data: list[dict[str, Any]]) -> bool:
         try:

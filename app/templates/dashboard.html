@@ -1091,7 +1091,7 @@
                 }
 
                 if (!captureStream || !hasActiveVideoTrack(captureStream)) {
-                    throw (lastError || new Error('Não foi possÃ­vel iniciar o vídeo da Câmera'));
+                    throw (lastError || new Error('Não foi possível iniciar o vídeo da Câmera'));
                 }
 
                 video.srcObject = captureStream;
@@ -1106,7 +1106,7 @@
 
                 setTimeout(() => {
                     if (video.videoWidth === 0 || video.videoHeight === 0) {
-                        showToast('Câmera conectada, mas sem imagem. Verifique permissÃ£o no navegador.');
+                        showToast('Câmera conectada, mas sem imagem. Verifique permissão no navegador.');
                     }
                 }, 1200);
                 
@@ -1135,15 +1135,15 @@
             const canvas = document.getElementById('captureCanvas');
             const ctx = canvas.getContext('2d');
             
-            // Verificar se o vídeo estÃ¡ pronto
+            // Verificar se o vídeo está pronto
             if (video.readyState !== 4) {
                 showToast('Aguarde a Câmera iniciar completamente');
                 return;
             }
             
-            // Verificar se o vídeo tem dimensÃµes válidas
+            // Verificar se o vídeo tem dimensões válidas
             if (video.videoWidth === 0 || video.videoHeight === 0) {
-                showToast('vídeo sem dimensÃµes válidas');
+                showToast('vídeo sem dimensões válidas');
                 return;
             }
             
@@ -1231,7 +1231,7 @@
             hideModal('registerModal');
         }
         
-        // Sobrescrever a funÃ§Ã£o registerUser para usar fotos capturadas
+        // Sobrescrever a função registerUser para usar fotos capturadas
         async function registerUser(event) {
             event.preventDefault();
             

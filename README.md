@@ -42,10 +42,50 @@ source venv/bin/activate
 ### 3. Instalar dependências
 
 ```bash
+# Aplicação (obrigatório)
 pip install -r requirements.txt
+
+# Backend de reconhecimento facial (necessário em produção — ver aviso abaixo)
+pip install -r requirements-recognition.txt
+
+# Só para rodar os testes
+pip install -r requirements-dev.txt
 ```
 
-**Nota:** A primeira execução pode levar alguns minutos pois o DeepFace irá baixar os modelos de reconhecimento facial (cerca de 500MB).
+**Nota:** A primeira execução baixa o modelo de reconhecimento (~300MB para o
+InsightFace `buffalo_l`).
+
+> ### ⚠️ Sem o backend de reconhecimento, o sistema sobe em modo degradado
+>
+> `requirements.txt` traz só a detecção base (OpenCV). Sem
+> `requirements-recognition.txt`, o serviço cai num fallback que **detecta rosto
+> mas não identifica pessoa**: os "embeddings" são histogramas de intensidade,
+> não vetores biométricos, e o reconhecimento passa a ser essencialmente
+> aleatório.
+>
+> Esse estado é sinalizado, não silencioso — o log de startup registra
+> `RECONHECIMENTO DEGRADADO` e `GET /api/health` responde:
+>
+> ```json
+> {
+>   "status": "degraded",
+>   "recognition": { "degraded": true, "embedding_backend": "opencv-hog (sem valor biométrico)" }
+> }
+> ```
+>
+> **Cheque isso após instalar.** Se `recognition.degraded` for `true`, o sistema
+> não está reconhecendo ninguém de verdade.
+
+> ### Sobre a versão do Python
+>
+> O padrão em `config.yaml` (`face_model: Facenet512`) depende de
+> DeepFace + TensorFlow, e **TensorFlow não tem wheel para Python 3.14**. Em
+> Python 3.14 use o InsightFace (opção A do
+> `requirements-recognition.txt`, que é a prioridade 0 do código e não precisa de
+> TensorFlow). Para usar Facenet512, rode a aplicação em Python 3.12 ou 3.13.
+>
+> Trocar de backend invalida os rostos já cadastrados — embeddings de modelos
+> diferentes não são comparáveis. É preciso recadastrar as pessoas.
 
 ### 4. Configuração de Segurança (IMPORTANTE!)
 
@@ -199,7 +239,9 @@ Defina `ADMIN_USERNAME` e `ADMIN_PASSWORD` no arquivo `.env` antes de iniciar o 
   /utils         - Utilitários
 main.py          - Ponto de entrada
 config.yaml      - Configurações
-requirements.txt - Dependências
+requirements.txt - Dependências da aplicação
+requirements-recognition.txt - Backend de reconhecimento (opcional/produção)
+requirements-dev.txt - Dependências de teste
 ```
 
 ---

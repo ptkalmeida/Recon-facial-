@@ -1,0 +1,38 @@
+# Backend de reconhecimento facial (OPCIONAL, mas necessario em producao)
+#
+#     pip install -r requirements.txt -r requirements-recognition.txt
+#
+# Sem nenhum destes pacotes, `FaceRecognitionService` cai no fallback
+# OpenCV Haar + histograma de intensidade (`_extract_hog_features`), que detecta
+# rosto mas NAO produz vetor de identidade: o reconhecimento nao e confiavel.
+# Nesse estado o sistema avisa explicitamente - `logger.error` no startup e
+# `/api/health` com `status: degraded` e `recognition.degraded: true`.
+#
+# ---------------------------------------------------------------------------
+# Opcao A (recomendada): InsightFace
+# ---------------------------------------------------------------------------
+# Prioridade 0 em app/services/face_recognition.py. Roda em onnxruntime, sem
+# TensorFlow, e tem wheel para Python 3.14. Baixa o modelo buffalo_l (~300 MB)
+# no primeiro uso.
+insightface==1.0.1
+onnxruntime==1.29.0
+
+# ---------------------------------------------------------------------------
+# Opcao B: DeepFace + TensorFlow (Facenet512)
+# ---------------------------------------------------------------------------
+# E o que config.yaml pede por padrao (face_model: Facenet512), mas ATENCAO:
+# tensorflow NAO tem wheel para Python 3.14 (verificado em 31/08/2026 - "No
+# matching distribution found"). Para usar esta opcao e preciso rodar a
+# aplicacao em Python 3.12 ou 3.13. Descomente:
+#
+# deepface==0.0.99
+# tensorflow==2.18.0
+#
+# ---------------------------------------------------------------------------
+# ATENCAO AO TROCAR DE BACKEND
+# ---------------------------------------------------------------------------
+# Embeddings de backends diferentes vivem em espacos vetoriais diferentes (e com
+# dimensoes diferentes). Trocar o backend invalida todos os rostos ja cadastrados:
+# as pessoas precisam ser recadastradas, senao o sistema compara vetores
+# incomparaveis e o resultado e aleatorio. Limpe a tabela `embeddings` e refaca
+# os cadastros ao migrar.

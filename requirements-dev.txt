@@ -1,0 +1,11 @@
+# Dependencias de desenvolvimento e teste
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+#     pytest tests/
+#
+# Os testes de navegador (tests/browser/) NAO usam este arquivo: rodam em venv
+# proprio, porque Playwright + Chromium sao pesados e independentes da app.
+# Ver tests/browser/README.md.
+
+pytest==7.4.0
+httpx==0.28.1   # TestClient do FastAPI e scripts/stress_test.py

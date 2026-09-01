@@ -73,7 +73,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invÃ¡lido ou expirado"
+            detail="Token inválido ou expirado"
         )
     
     return payload
@@ -107,7 +107,7 @@ async def login(request: LoginRequest, request_obj: Request):
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenciais invÃ¡lidas"
+            detail="Credenciais inválidas"
         )
     
     access_token = create_access_token(
@@ -166,7 +166,7 @@ async def create_user(
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="UsuÃ¡rio jÃ¡ existe"
+            detail="Usuário já existe"
         )
     
     user = db_manager.create_user(
@@ -194,7 +194,7 @@ async def get_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="UsuÃ¡rio nÃ£o encontrado"
+            detail="Usuário não encontrado"
         )
     return UserResponse(**user.to_dict())
 
@@ -209,7 +209,7 @@ async def update_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="UsuÃ¡rio nÃ£o encontrado"
+            detail="Usuário não encontrado"
         )
     return UserResponse(**user.to_dict())
 
@@ -222,9 +222,9 @@ async def delete_user(
     if not db_manager.delete_user(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="UsuÃ¡rio nÃ£o encontrado"
+            detail="Usuário não encontrado"
         )
-    return {"message": "UsuÃ¡rio deletado com sucesso"}
+    return {"message": "Usuário deletado com sucesso"}
 
 
 @router.post("/users_register")
@@ -428,7 +428,7 @@ async def detect_faces(
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Muitas requisiÃ§Ãµes de reconhecimento. Tente novamente mais tarde."
+            detail="Muitas requisições de reconhecimento. Tente novamente mais tarde."
         )
 
     contents = await image.read()
@@ -438,7 +438,7 @@ async def detect_faces(
     if frame is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Imagem invÃ¡lida"
+            detail="Imagem inválida"
         )
 
     results = face_service.process_frame(frame, camera_id or "webcam")
@@ -485,10 +485,10 @@ async def export_data(
             limit=10000
         )
         data = [{"Data": log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                 "UsuÃ¡rio": log.user.name if log.user else "Desconhecido",
-                 "AÃ§Ã£o": log.action,
+                 "Usuário": log.user.name if log.user else "Desconhecido",
+                 "Ação": log.action,
                  "Status": log.status,
-                 "ConfianÃ§a": f"{log.confidence:.2f}" if log.confidence else "N/A",
+                 "Confiança": f"{log.confidence:.2f}" if log.confidence else "N/A",
                  "Fonte": log.camera_source or "N/A"} 
                 for log in logs]
     elif request.export_type == "presence":
@@ -497,15 +497,15 @@ async def export_data(
             date=request.start_date
         )
         data = [{"Data": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                 "UsuÃ¡rio": r.user.name if r.user else "N/A",
+                 "Usuário": r.user.name if r.user else "N/A",
                  "Status": r.status,
                  "Entrada": r.check_in.strftime("%H:%M:%S") if r.check_in else "N/A",
-                 "SaÃ­da": r.check_out.strftime("%H:%M:%S") if r.check_out else "N/A"}
+                 "Saída": r.check_out.strftime("%H:%M:%S") if r.check_out else "N/A"}
                 for r in records]
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tipo de exportaÃ§Ã£o invÃ¡lido"
+            detail="Tipo de exportação inválido"
         )
     
     if request.format == "xlsx":
@@ -519,7 +519,7 @@ async def export_data(
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Formato invÃ¡lido"
+            detail="Formato inválido"
         )
     
     return StreamingResponse(
@@ -565,15 +565,29 @@ async def health_check():
         status = "degraded"
 
     uptime = time.time() - START_TIME
-    active_provider = settings_dict.get("face_recognition", {}).get("model", "Facenet512")
     version = settings_dict.get("version", "3.0.0")
+
+    # Backend real, não o configurado: se a biblioteca pedida não está instalada,
+    # o serviço cai para um fallback. Antes daqui sair o modelo do config.yaml,
+    # /api/health anunciava "Facenet512" enquanto rodava Haar cascade + HOG.
+    recognition = face_service.get_backend_info()
+    if recognition["degraded"]:
+        status = "degraded"
+        recognition["warning"] = (
+            "Embeddings gerados por histograma de intensidade (fallback), não por "
+            "modelo de reconhecimento facial. Identificação não é confiável neste "
+            "estado. Instale insightface, deepface+tensorflow ou face_recognition."
+        )
 
     health_payload = {
         "status": status,
         "service": "Face Recognition Pro 3.0",
         "database": db_status,
         "orchestrator": orchestrator_metrics,
-        "active_provider": active_provider,
+        # Mantido pelo nome antigo para não quebrar quem já consome, mas agora
+        # com o valor verdadeiro.
+        "active_provider": recognition["embedding_backend"],
+        "recognition": recognition,
         "model_ready": service_status["model_ready"],
         "model_error": service_status["model_error"],
         "uptime_seconds": round(uptime, 2),

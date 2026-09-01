@@ -44,8 +44,19 @@ async def lifespan(app: FastAPI):
             embeddings_data = db_manager.get_all_embeddings_data()
             face_service.load_known_faces(embeddings_data)
             logger.info(f"Carregados {len(embeddings_data)} rostos conhecidos")
-            api_routes.service_status["model_ready"] = True
-            api_routes.service_status["model_error"] = None
+            # initialize() devolve True até no fallback HOG, que não reconhece
+            # ninguém de forma confiável. Tratar isso como "modelo pronto"
+            # esconderia o problema: /api/health dizia ok rodando Haar+HOG.
+            if face_service.recognition_degraded:
+                api_routes.service_status["model_ready"] = False
+                api_routes.service_status["model_error"] = (
+                    "Nenhuma biblioteca de reconhecimento instalada "
+                    f"(embeddings via {face_service.embedding_backend}); "
+                    f"a configuração pede {face_service.model_name}"
+                )
+            else:
+                api_routes.service_status["model_ready"] = True
+                api_routes.service_status["model_error"] = None
         else:
             logger.warning("FaceRecognitionService não pôde ser inicializado completamente")
             api_routes.service_status["model_ready"] = False
@@ -55,9 +66,15 @@ async def lifespan(app: FastAPI):
         api_routes.service_status["model_ready"] = False
         api_routes.service_status["model_error"] = str(e)
     
-    logger.info("Sistema pronto!")
+    if api_routes.service_status["model_ready"]:
+        logger.info("Sistema pronto!")
+    else:
+        logger.warning(
+            "Sistema no ar em modo DEGRADADO: %s",
+            api_routes.service_status["model_error"],
+        )
     
-    # Inicia tarefa de limpeza periÃ³dica (Fase 3 - Performance)
+    # Inicia tarefa de limpeza periódica (Fase 3 - Performance)
     import asyncio
     async def cleanup_task():
         while True:
@@ -71,9 +88,9 @@ async def lifespan(app: FastAPI):
                 # Limpa estados internos (last_log, confirmation_states)
                 api_routes.cleanup_internal_states()
                 
-                logger.debug("Limpeza periÃ³dica concluÃ­da")
+                logger.debug("Limpeza periódica concluída")
             except Exception as e:
-                logger.error(f"Erro na limpeza periÃ³dica: {e}")
+                logger.error(f"Erro na limpeza periódica: {e}")
 
     background_task = asyncio.create_task(cleanup_task())
 
