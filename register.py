@@ -182,10 +182,15 @@ def main():
         print('❌ Erro: Não foi possível inicializar o serviço de reconhecimento facial.')
         return
     
-    # Show which backend is being used
-    from app.services.face_recognition import HAS_DEEPFACE
-    backend_name = "DeepFace" if HAS_DEEPFACE else "OpenCV Fallback"
-    print(f'✅ Serviço de reconhecimento inicializado ({backend_name})')
+    # Show which backend is actually in use (not just which is installed)
+    backend_info = face_service.get_backend_info()
+    if backend_info["degraded"]:
+        print(f'⚠️  RECONHECIMENTO DEGRADADO: embeddings via '
+              f'\'{backend_info["embedding_backend"]}\' — não identifica pessoa de verdade.')
+    else:
+        print(f'✅ Serviço de reconhecimento inicializado '
+              f'(detecção: {backend_info["detection_backend"]}, '
+              f'embedding: {backend_info["embedding_backend"]})')
     
     # Authenticate
     if not authenticate_cli():

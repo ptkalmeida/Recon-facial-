@@ -282,7 +282,7 @@ async def root(request: Request):
             <p>Sistema profissional de reconhecimento facial com IA</p>
             <a href="/dashboard" class="btn">Acessar Dashboard</a>
             <div class="features">
-                <div class="feature">✓ Reconhecimento facial com DeepFace (Facenet512)</div>
+                <div class="feature">✓ Reconhecimento facial com InsightFace (ArcFace)</div>
                 <div class="feature">✓ Detecção com RetinaFace</div>
                 <div class="feature">✓ Anti-spoofing com detecção de vivacidade</div>
                 <div class="feature">✓ Controle de presença automatizado</div>
