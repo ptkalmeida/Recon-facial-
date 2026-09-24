@@ -13,6 +13,8 @@ from sys import platform
 
 import cv2
 
+from app.security.redaction import redact_url_credentials
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +45,12 @@ class VideoCapture:
         self._cap = self._open_capture(source)
 
         if not self._cap.isOpened():
-            raise RuntimeError(f"Não foi possível abrir a fonte de câmera: {source}")
+            # A URL RTSP carrega usuário e senha: a mensagem vai para o log e
+            # para `self.error`, então sai redigida.
+            raise RuntimeError(
+                "Não foi possível abrir a fonte de câmera: "
+                f"{redact_url_credentials(source)}"
+            )
 
         if self._is_webcam:
             if width:
@@ -113,6 +120,9 @@ class CameraWorker:
     path produced the frame.
     """
 
+    # Texto fixo para quem não é admin: o detalhe do erro fica no log.
+    PUBLIC_ERROR_MESSAGE = "Falha na captura da câmera; detalhes no log do servidor"
+
     def __init__(self, source, camera_id: str, interval_seconds: float,
                  face_service, performance_tracker, handle_results_fn):
         self.source = source
@@ -143,8 +153,8 @@ class CameraWorker:
                 cap = VideoCapture(self.source)
             except RuntimeError as e:
                 self.connected = False
-                self.error = str(e)
-                logger.error(f"[camera_worker] {e}")
+                self._set_error(e)
+                logger.error(f"[camera_worker] {self.error}")
                 time.sleep(2)
                 continue
 
@@ -156,8 +166,8 @@ class CameraWorker:
                 try:
                     ok, frame = cap.read()
                 except Exception as e:
-                    self.error = str(e)
-                    logger.error(f"[camera_worker] erro na leitura do frame: {e}")
+                    self._set_error(e)
+                    logger.error(f"[camera_worker] erro na leitura do frame: {self.error}")
                     break
 
                 if not ok or frame is None:
@@ -171,8 +181,8 @@ class CameraWorker:
                         self._performance_tracker.record(results["processing_time_ms"])
                     self._handle_results_fn(results, self.camera_id)
                 except Exception as e:
-                    self.error = str(e)
-                    logger.error(f"[camera_worker] falha ao processar frame: {e}")
+                    self._set_error(e)
+                    logger.error(f"[camera_worker] falha ao processar frame: {self.error}")
 
                 elapsed = time.perf_counter() - cycle_start
                 remaining = self.interval_seconds - elapsed
@@ -184,9 +194,20 @@ class CameraWorker:
             if not self._stop_event.is_set():
                 time.sleep(1)
 
+    def _set_error(self, exc: Exception) -> None:
+        # Erros do OpenCV/FFmpeg podem repetir a URL da fonte, com a senha.
+        self.error = redact_url_credentials(exc)
+
     def get_status(self) -> dict:
+        """Estado seguro para exposição pública (usado por /api/health).
+
+        `/api/health` não exige autenticação, então o texto do erro não sai
+        daqui, nem redigido: além da URL, ele pode revelar IP interno, porta e
+        caminho da câmera. A chave `error` continua existindo com o mesmo tipo
+        (string ou null), para não quebrar quem só testa se há erro.
+        """
         return {
             "connected": self.connected,
             "last_frame_at": self.last_frame_at,
-            "error": self.error,
+            "error": self.PUBLIC_ERROR_MESSAGE if self.error else None,
         }

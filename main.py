@@ -27,6 +27,7 @@ from app.security.middleware import (
     get_secure_cors_options,
 )
 from app.security.rate_limiter import api_rate_limiter
+from app.security.redaction import CredentialRedactionFilter, redact_url_credentials
 from app.services.camera_worker import CameraWorker, resolve_camera_source
 
 def setup_logging() -> None:
@@ -47,8 +48,13 @@ def setup_logging() -> None:
     for handler in list(raiz.handlers):
         raiz.removeHandler(handler)
 
+    # Senha de câmera (rtsp://usuario:senha@...) não pode chegar a nenhum
+    # destino de log, venha de que módulo vier.
+    redacao = CredentialRedactionFilter()
+
     console = logging.StreamHandler()
     console.setFormatter(formato)
+    console.addFilter(redacao)
     raiz.addHandler(console)
 
     try:
@@ -61,6 +67,7 @@ def setup_logging() -> None:
             encoding="utf-8",
         )
         arquivo.setFormatter(formato)
+        arquivo.addFilter(redacao)
         raiz.addHandler(arquivo)
     except (OSError, ValueError) as e:
         # Disco cheio, permissão, caminho inválido: seguir só com console é
@@ -149,7 +156,10 @@ async def lifespan(app: FastAPI):
             )
             camera_worker.start()
             api_routes.camera_worker = camera_worker
-            logger.info(f"Captura de câmera no servidor iniciada (fonte: {source})")
+            logger.info(
+                "Captura de câmera no servidor iniciada (fonte: %s)",
+                redact_url_credentials(source),
+            )
 
     yield
 
