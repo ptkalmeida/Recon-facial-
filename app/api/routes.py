@@ -385,6 +385,7 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
     camera worker (app/services/camera_worker.py), so both capture paths follow
     the exact same security-relevant business rules.
     """
+    desconhecidos = []
     for detection in results.get("detections", []):
         if detection.get("user_id"):
             detected_user_id = detection["user_id"]
@@ -448,6 +449,12 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
             door_manager.open_door(duration=5)
             # ------------------------------
         else:
+            desconhecidos.append(detection)
+
+    # Desconhecidos só geram log e alerta depois de confirmados em vários frames
+    # (uma decisão por frame, não por rosto) - ver RecognitionOrchestrator.
+    if desconhecidos and RecognitionAction.LOG_ACCESS in orchestrator.handle_unknown(camera_id):
+        for detection in desconhecidos:
             db_manager.log_access(
                 user_id=None,
                 action="unknown_detected",
@@ -455,11 +462,11 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                 camera_source=camera_id,
                 confidence=detection.get("match_confidence")
             )
-            threading.Thread(
-                target=email_notifier.notify_unknown_detected,
-                args=(camera_id, detection.get("match_confidence")),
-                daemon=True
-            ).start()
+        threading.Thread(
+            target=email_notifier.notify_unknown_detected,
+            args=(camera_id, max(d.get("match_confidence") or 0.0 for d in desconhecidos)),
+            daemon=True
+        ).start()
 
 
 @router.post("/recognition/detect")
