@@ -74,6 +74,13 @@ class FaceInferenceError(RuntimeError):
     """
 
 
+#: Módulos do pacote buffalo_l que o serviço usa: a caixa (e os 5 pontos) do
+#: detector e o embedding. Sem esta lista o InsightFace carrega e roda também
+#: landmark_2d_106, landmark_3d_68 e genderage em cada rosto de cada frame -
+#: resultado descartado. Medido numa foto real: 609 ms -> 355 ms por frame em
+#: CPU, com embedding idêntico.
+INSIGHTFACE_MODULES = ["detection", "recognition"]
+
 #: Falhas seguidas de inferência a partir das quais /api/health fica degraded.
 INFERENCE_FAILURES_DEGRADED_AFTER = 5
 
@@ -112,6 +119,10 @@ class FaceRecognitionService:
         # DeepFace configuration
         self.model_name = self.fr_config.get("model", "Facenet512")
         self.detector_backend = self.fr_config.get("detector", "retinaface")
+        # Nota mínima do detector para aceitar uma caixa como rosto. O valor do
+        # config.yaml (detector_threshold) não era lido por ninguém: o
+        # InsightFace usava o padrão dele (0,5).
+        self.detector_threshold = float(self.fr_config.get("detector_threshold", 0.5))
         self.distance_metric = self.fr_config.get("distance_metric", "cosine")
         self.threshold = self.fr_config.get("threshold", 0.4)
         # Histerese: faixa [threshold, hold_threshold) aceita a pessoa que teve
@@ -240,8 +251,12 @@ class FaceRecognitionService:
         # Priority 0: InsightFace
         if HAS_INSIGHTFACE:
             try:
-                self._insightface_app = FaceAnalysis(name="buffalo_l")
-                self._insightface_app.prepare(ctx_id=0, det_size=(640, 640))
+                self._insightface_app = FaceAnalysis(
+                    name="buffalo_l", allowed_modules=INSIGHTFACE_MODULES
+                )
+                self._insightface_app.prepare(
+                    ctx_id=0, det_size=(640, 640), det_thresh=self.detector_threshold
+                )
                 return self._finish_initialization("insightface:buffalo_l")
             except Exception as e:
                 logger.error(f"Error initializing InsightFace: {e}")
