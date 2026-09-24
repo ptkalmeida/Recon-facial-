@@ -176,6 +176,10 @@ class FaceRecognitionService:
 
         # Falhas de inferência seguidas (zera no primeiro frame processado).
         self.consecutive_inference_failures = 0
+
+        # Embeddings do banco ignorados na última carga por virem de outro
+        # backend (ver load_known_faces).
+        self.incompatible_embeddings = 0
         
     #: Backend de embedding sem valor biométrico real: `_extract_hog_features()`
     #: devolve um histograma de intensidade em grade, não um vetor de identidade.
@@ -214,6 +218,7 @@ class FaceRecognitionService:
             # Só a contagem: o texto do erro fica no log (o health é público).
             "consecutive_inference_failures": self.consecutive_inference_failures,
             "inference_failing": self.inference_failing,
+            "incompatible_embeddings": self.incompatible_embeddings,
         }
 
     @property
@@ -314,20 +319,50 @@ class FaceRecognitionService:
         self.face_cascade = cv2.CascadeClassifier(cascade_path)
         return self._finish_initialization("opencv-haar")
     
+    def _e_rotulo_de_backend(self, rotulo: Any) -> bool:
+        """Rótulo no formato de `embedding_backend` ("insightface:buffalo_l"...)."""
+        return isinstance(rotulo, str) and (":" in rotulo or rotulo == self.HOG_EMBEDDING_BACKEND)
+
     def load_known_faces(self, embeddings_data: list[dict[str, Any]]) -> bool:
+        """Carrega os rostos cadastrados, só os compatíveis com o backend ativo.
+
+        Embeddings de modelos diferentes não são comparáveis - e vários têm a
+        mesma dimensão (ArcFace e Facenet512 são ambos 512-d), então a
+        comparação não falharia: daria distâncias sem sentido, em silêncio.
+        Um embedding rotulado com OUTRO backend é ignorado e contado em
+        `incompatible_embeddings` (a pessoa precisa ser recadastrada).
+        Rótulos antigos, anteriores a este registro (o nome do modelo do
+        config, como "Facenet512"), não dizem qual backend os gerou: são
+        aceitos, como antes.
+        """
+        ativo = self.embedding_backend
+        filtrar = self._e_rotulo_de_backend(ativo)
         try:
             with self._lock:
                 self._known_embeddings.clear()
                 self._known_users.clear()
-                
+                incompativeis = 0
+
                 for emb_data in embeddings_data:
                     user_id = emb_data.get("user_id")
                     embedding = emb_data.get("embedding_data")
-                    
+                    rotulo = emb_data.get("model_used")
+
+                    if filtrar and self._e_rotulo_de_backend(rotulo) and rotulo != ativo:
+                        incompativeis += 1
+                        continue
+
                     if user_id and embedding:
                         self._known_embeddings[user_id] = np.array(embedding)
                         self._known_users[user_id] = emb_data.get("user_name", "")
-                
+
+                self.incompatible_embeddings = incompativeis
+                if incompativeis:
+                    logger.warning(
+                        "%d rosto(s) cadastrado(s) com outro modelo foram ignorados "
+                        "(backend ativo: %s). Recadastre essas pessoas.",
+                        incompativeis, ativo,
+                    )
                 logger.info(f"Carregados {len(self._known_embeddings)} rostos conhecidos")
                 return True
         except Exception as e:

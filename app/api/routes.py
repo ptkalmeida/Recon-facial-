@@ -337,7 +337,9 @@ async def register_user_with_face(
         db_manager.add_embedding(
             user_id=user.id,
             embedding_data=avg_embedding,
-            model_used=settings_dict.get("face_recognition", {}).get("model", "Facenet512"),
+            # O backend que gerou o vetor de fato, não o modelo pedido no config
+            # (que pode nem estar instalado) - ver load_known_faces.
+            model_used=face_service.embedding_backend,
             is_primary=True
         )
         

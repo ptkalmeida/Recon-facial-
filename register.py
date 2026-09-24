@@ -122,11 +122,11 @@ def register_person(name: str, email: Optional[str], image_paths: List[str], fac
         user = db_manager.create_user(name=name, email=email, role="user")
         
         # Add embedding
-        model_name = getattr(face_service, 'model_name', 'opencv_fallback')
+        # O backend que gerou o vetor de fato (ver load_known_faces).
         db_manager.add_embedding(
             user_id=user.id,
             embedding_data=embedding.tolist(),
-            model_used=model_name,
+            model_used=face_service.embedding_backend,
             is_primary=True
         )
         

@@ -422,7 +422,8 @@ class DatabaseManager:
             data.append({
                 "user_id": embedding.user_id,
                 "user_name": embedding.user.name if embedding.user else "Unknown",
-                "embedding_data": embedding_data
+                "embedding_data": embedding_data,
+                "model_used": embedding.model_used,
             })
         return data
 
