@@ -73,6 +73,11 @@ def cleanup_internal_states():
 
 
 
+def _reload_known_faces() -> None:
+    """Sincroniza os rostos em memória com o banco (ativos, com embedding)."""
+    face_service.load_known_faces(db_manager.get_all_embeddings_data())
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     payload = decode_token(token)
@@ -212,12 +217,15 @@ async def update_user(
     user_data: UserUpdate,
     current_user: dict = Depends(require_admin)
 ):
-    user = db_manager.update_user(user_id, **user_data.dict(exclude_unset=True))
+    user = db_manager.update_user(user_id, **user_data.model_dump(exclude_unset=True))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuário não encontrado"
         )
+    # Desativar (ou reativar) tem de valer já no reconhecimento, não no próximo
+    # restart.
+    _reload_known_faces()
     return UserResponse(**user.to_dict())
 
 
@@ -231,6 +239,9 @@ async def delete_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuário não encontrado"
         )
+    # Sem recarregar, o rosto excluído continuava em memória: a pessoa seguia
+    # sendo reconhecida - e a porta abrindo para ela - até reiniciar o servidor.
+    _reload_known_faces()
     return {"message": "Usuário deletado com sucesso"}
 
 
@@ -314,7 +325,7 @@ async def register_user_with_face(
             is_primary=True
         )
         
-        face_service.load_known_faces(db_manager.get_all_embeddings_data())
+        _reload_known_faces()
         
         db_manager.log_access(
             user_id=user.id,

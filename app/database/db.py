@@ -231,6 +231,11 @@ class DatabaseManager:
                     if hasattr(user, key):
                         setattr(user, key, value)
                 session.flush()
+                # `updated_at` é gerado pelo banco no UPDATE (onupdate=now) e
+                # fica expirado após o flush. Sem carregá-lo aqui, o to_dict()
+                # da resposta tentava buscá-lo com a sessão já fechada e o PUT
+                # respondia 500 - depois de a alteração já ter sido gravada.
+                session.refresh(user)
             return user
 
     def delete_user(self, user_id: int) -> bool:
@@ -265,11 +270,18 @@ class DatabaseManager:
             return session.query(Embedding).filter(Embedding.user_id == user_id).all()
 
     def get_all_embeddings(self) -> List[Embedding]:
+        """Embeddings das pessoas que podem ser reconhecidas.
+
+        Só usuários ATIVOS: sem o filtro, desativar alguém (is_active=False) não
+        revogava nada - a pessoa continuava sendo reconhecida e abrindo a porta,
+        inclusive depois de reiniciar o servidor.
+        """
         with self.session() as session:
             return (
                 session.query(Embedding)
+                .join(User, Embedding.user_id == User.id)
                 .options(joinedload(Embedding.user))
-                .filter(Embedding.is_primary == True)
+                .filter(Embedding.is_primary == True, User.is_active == True)
                 .all()
             )
 
