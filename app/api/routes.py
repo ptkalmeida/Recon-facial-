@@ -395,12 +395,18 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                 continue
 
             if RecognitionAction.LOG_ACCESS in actions:
+                extra = {}
+                if detection.get("match_type") == FaceRecognitionService.HELD_MATCH:
+                    # Registro honesto: identificado pela histerese, não por
+                    # match estrito neste frame.
+                    extra["details"] = {"match_type": FaceRecognitionService.HELD_MATCH}
                 db_manager.log_access(
                     user_id=detected_user_id,
                     action="recognition",
                     status="success",
                     camera_source=camera_id,
-                    confidence=detection.get("match_confidence")
+                    confidence=detection.get("match_confidence"),
+                    **extra
                 )
 
             # Abre a visita ou só atualiza "visto por último" (ver mark_seen).
@@ -419,6 +425,11 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
             is_live = detection.get("is_live", True)
 
             if confidence <= DOOR_OPEN_MIN_CONFIDENCE:
+                continue
+
+            # Defesa em profundidade: a histerese já devolve confiança 0, mas a
+            # porta só abre com match estrito neste frame, por regra explícita.
+            if detection.get("match_type", "known") != "known":
                 continue
 
             if REQUIRE_LIVENESS_FOR_DOOR and not is_live:

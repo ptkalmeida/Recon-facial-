@@ -100,6 +100,11 @@ class FaceRecognitionService:
         self.detector_backend = self.fr_config.get("detector", "retinaface")
         self.distance_metric = self.fr_config.get("distance_metric", "cosine")
         self.threshold = self.fr_config.get("threshold", 0.4)
+        # Histerese: faixa [threshold, hold_threshold) aceita a pessoa que teve
+        # match estrito na mesma câmera há menos de hold_seconds.
+        self.hold_threshold = float(self.fr_config.get("hold_threshold", 0.55))
+        self.hold_seconds = float(self.fr_config.get("hold_seconds", 3.0))
+        self._identity_hold: dict[tuple[str, int], float] = {}
         self.enforce_detection = self.fr_config.get("enforce_detection", True)
         self.align = self.fr_config.get("align", True)
         self.normalization = self.fr_config.get("normalization", "base")
@@ -640,8 +645,25 @@ class FaceRecognitionService:
             logger.error(f"Erro ao extrair features espaciais: {e}")
             return None
     
-    def verify_face(self, embedding: np.ndarray) -> tuple[int | None, float, str]:
-        """Verify face against known embeddings."""
+    #: `match_type` da faixa de histerese. Não abre a porta (confiança 0).
+    HELD_MATCH = "held"
+
+    def verify_face(self, embedding: np.ndarray,
+                    camera_id: str | None = None) -> tuple[int | None, float, str]:
+        """Verify face against known embeddings.
+
+        Com `camera_id`, aplica histerese: uma distância entre `threshold` e
+        `hold_threshold` ainda identifica a pessoa SE ela teve match estrito
+        nesta câmera nos últimos `hold_seconds`. Sem isso, um frame de perfil
+        ou borrado de quem está parado diante da câmera virava "desconhecido".
+
+        Travas de segurança da faixa de histerese:
+        - só a mesma pessoa, na mesma câmera, logo depois de um match estrito;
+        - o prazo conta do último match ESTRITO - frames "held" não o renovam,
+          então uma sequência de matches fracos não se sustenta sozinha;
+        - devolve confiança 0 e match_type "held": a porta exige confiança
+          alta e match_type "known", logo nunca abre por histerese.
+        """
         if not self._known_embeddings:
             return None, 0.0, "unknown"
         
@@ -680,7 +702,18 @@ class FaceRecognitionService:
         if best_match is not None and best_distance < self.threshold:
             confidence = 1.0 - (best_distance / self.threshold)
             confidence = max(0.0, min(confidence, 1.0))
+            if camera_id is not None:
+                self._identity_hold[(camera_id, best_match)] = time.monotonic()
             return best_match, confidence, "known"
+
+        if (
+            camera_id is not None
+            and best_match is not None
+            and best_distance < self.hold_threshold
+        ):
+            ultimo_estrito = self._identity_hold.get((camera_id, best_match))
+            if ultimo_estrito is not None and time.monotonic() - ultimo_estrito <= self.hold_seconds:
+                return best_match, 0.0, self.HELD_MATCH
         
         # Return unknown with rejection confidence
         rejection_confidence = 1.0 - min(best_distance / (self.threshold * 1.5), 1.0)
@@ -789,7 +822,7 @@ class FaceRecognitionService:
             if embedding is None:
                 continue
                 
-            user_id, confidence, match_type = self.verify_face(embedding)
+            user_id, confidence, match_type = self.verify_face(embedding, camera_id)
             
             # Todos os rostos do frame são comparados com o frame ANTERIOR. Antes,
             # o frame era guardado dentro de check_liveness a cada rosto: o

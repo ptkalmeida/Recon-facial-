@@ -47,6 +47,13 @@ face_recognition:
   # fotos diferentes deu 0.18; pessoas diferentes, 0.86 e 0.90. 0.4 fica no meio
   # com margem dos dois lados.
   threshold: 0.4
+  # Histerese de identidade: depois de um match estrito (< threshold), a mesma
+  # pessoa na mesma camera continua reconhecida ate hold_threshold, por
+  # hold_seconds - evita que um frame de perfil ou borrado vire "desconhecido" e
+  # faca a presenca piscar. So vale para presenca e log: a porta exige o match
+  # estrito. O prazo conta do ultimo match estrito e nao se renova sozinho.
+  hold_threshold: 0.55
+  hold_seconds: 3
   enforce_detection: true
   detector_threshold: 0.7
   # Image normalization

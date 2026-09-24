@@ -20,7 +20,7 @@ def _service() -> FaceRecognitionService:
     service = FaceRecognitionService({"face_recognition": {}, "anti_spoofing": {"enabled": True}})
     service.detect_faces = lambda frame: list(ROSTOS)
     service.extract_embedding = lambda frame, det, **kw: np.ones(4, dtype=np.float32)
-    service.verify_face = lambda emb: (None, 0.0, "unknown")
+    service.verify_face = lambda emb, camera_id=None: (None, 0.0, "unknown")
     return service
 
 

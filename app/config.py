@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     face_detector: str = "retinaface"
     face_distance_metric: str = "cosine"
     face_threshold: float = 0.4
+    # Histerese de identidade (ver FaceRecognitionService.verify_face): depois
+    # de um match ESTRITO (< face_threshold), a mesma pessoa na mesma câmera
+    # continua reconhecida até esta distância, por face_hold_seconds. Só vale
+    # para presença e log - a porta exige o match estrito.
+    face_hold_threshold: float = 0.55
+    face_hold_seconds: float = 3.0
     face_enforce_detection: bool = True
     face_detector_threshold: float = 0.7
     face_align: bool = True
@@ -217,6 +223,8 @@ YAML_TO_FIELD: dict[tuple[str, ...], str] = {
     ("face_recognition", "detector"): "face_detector",
     ("face_recognition", "distance_metric"): "face_distance_metric",
     ("face_recognition", "threshold"): "face_threshold",
+    ("face_recognition", "hold_threshold"): "face_hold_threshold",
+    ("face_recognition", "hold_seconds"): "face_hold_seconds",
     ("face_recognition", "enforce_detection"): "face_enforce_detection",
     ("face_recognition", "detector_threshold"): "face_detector_threshold",
     ("face_recognition", "align"): "face_align",
@@ -333,6 +341,8 @@ settings_dict = {
         "detector": settings.face_detector,
         "distance_metric": settings.face_distance_metric,
         "threshold": settings.face_threshold,
+        "hold_threshold": settings.face_hold_threshold,
+        "hold_seconds": settings.face_hold_seconds,
         "enforce_detection": settings.face_enforce_detection,
         "detector_threshold": settings.face_detector_threshold,
         "align": settings.face_align,
