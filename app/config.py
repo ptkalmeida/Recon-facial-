@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     
     # Database
     database_path: str = "data/face_recognition.db"
+    # Journal WAL no SQLite (leitura e escrita concorrentes sem "database is
+    # locked"). Desligue só se o banco estiver numa pasta de rede, onde o SQLite
+    # não suporta WAL.
+    database_wal: bool = True
     
     # Face Recognition
     face_model: str = "Facenet512"

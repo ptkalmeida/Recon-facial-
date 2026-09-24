@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float, DateTime, Boolean,
+    create_engine, event, Column, Integer, String, Float, DateTime, Boolean,
     Text, ForeignKey, Enum, JSON, Index
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, joinedload
@@ -167,14 +167,57 @@ class Camera(Base):
         }
 
 
+#: Espera por um lock de escrita antes de desistir com "database is locked".
+SQLITE_BUSY_TIMEOUT_MS = 30000
+
+
+def _configurar_conexao_sqlite(dbapi_conn, _registro, wal: bool) -> None:
+    """PRAGMAs por conexão (o SQLite não guarda busy_timeout no arquivo).
+
+    Escrevem no banco ao mesmo tempo as requisições HTTP (threads do pool), a
+    câmera do servidor e as threads de alerta. No modo de journal padrão
+    (DELETE) uma escrita bloqueia até as leituras, e o SQLite desiste na hora
+    com "database is locked".
+
+    - WAL: leitores não bloqueiam o escritor, nem o contrário.
+    - synchronous=NORMAL: seguro com WAL (perde no máximo a última transação
+      numa queda de energia, sem corromper) e bem mais rápido que FULL.
+    - busy_timeout: espera o lock em vez de falhar de imediato.
+
+    `foreign_keys` fica DESLIGADO de propósito: o log de abertura manual da
+    porta grava o id do admin (0), que não é linha de `users`, e o banco real já
+    tem registros assim - ligar a checagem faria esse botão responder 500. As
+    remoções já são feitas em cascata pelo ORM.
+    """
+    cursor = dbapi_conn.cursor()
+    try:
+        if wal:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    finally:
+        cursor.close()
+
+
 class DatabaseManager:
-    def __init__(self, db_path: str = "data/face_recognition.db"):
+    def __init__(self, db_path: str = "data/face_recognition.db", wal: bool = True):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else "data", exist_ok=True)
         self.engine = create_engine(
             f"sqlite:///{db_path}",
             echo=False,
-            connect_args={"check_same_thread": False}
+            connect_args={
+                "check_same_thread": False,
+                "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000,
+            }
+        )
+        # WAL não se aplica a banco em memória; também pode ser desligado
+        # (DATABASE_WAL=false) para banco em pasta de rede, onde WAL não é
+        # suportado pelo SQLite.
+        usar_wal = wal and db_path != ":memory:"
+        event.listen(
+            self.engine, "connect",
+            lambda conn, reg: _configurar_conexao_sqlite(conn, reg, usar_wal),
         )
         Base.metadata.create_all(self.engine)
         self.SessionLocal = sessionmaker(
@@ -459,4 +502,4 @@ class DatabaseManager:
 # precedência é ambiente > .env > config.yaml > default.
 from app.config import settings, settings_dict  # noqa: E402
 
-db_manager = DatabaseManager(settings.database_path)
+db_manager = DatabaseManager(settings.database_path, wal=settings.database_wal)
