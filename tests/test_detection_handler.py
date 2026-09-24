@@ -21,7 +21,7 @@ def _unknown_detection(confidence=0.2):
 
 
 def test_known_high_confidence_logs_access_presence_and_opens_door(monkeypatch):
-    calls = {"log_access": [], "log_presence": [], "open_door": []}
+    calls = {"log_access": [], "mark_seen": [], "open_door": []}
 
     monkeypatch.setattr(
         api_routes.orchestrator,
@@ -32,9 +32,8 @@ def test_known_high_confidence_logs_access_presence_and_opens_door(monkeypatch):
         api_routes.db_manager, "log_access", lambda **kw: calls["log_access"].append(kw)
     )
     monkeypatch.setattr(
-        api_routes.db_manager, "log_presence", lambda **kw: calls["log_presence"].append(kw)
+        api_routes.db_manager, "mark_seen", lambda **kw: calls["mark_seen"].append(kw)
     )
-    monkeypatch.setattr(api_routes.db_manager, "get_current_presence", list)
     monkeypatch.setattr(
         api_routes.door_manager, "open_door", lambda duration: calls["open_door"].append(duration)
     )
@@ -44,8 +43,7 @@ def test_known_high_confidence_logs_access_presence_and_opens_door(monkeypatch):
 
     assert len(calls["log_access"]) == 1
     assert calls["log_access"][0]["action"] == "recognition"
-    assert len(calls["log_presence"]) == 1
-    assert calls["log_presence"][0]["status"] == "entrada"
+    assert calls["mark_seen"] == [{"user_id": 1, "camera_source": "cam-1"}]
     assert calls["open_door"] == [5]
 
 
@@ -58,8 +56,7 @@ def test_known_low_confidence_does_not_open_door(monkeypatch):
         lambda user_id, camera_id: [RecognitionAction.LOG_ACCESS],
     )
     monkeypatch.setattr(api_routes.db_manager, "log_access", lambda **kw: None)
-    monkeypatch.setattr(api_routes.db_manager, "log_presence", lambda **kw: None)
-    monkeypatch.setattr(api_routes.db_manager, "get_current_presence", list)
+    monkeypatch.setattr(api_routes.db_manager, "mark_seen", lambda **kw: None)
     monkeypatch.setattr(
         api_routes.door_manager, "open_door", lambda duration: calls["open_door"].append(duration)
     )

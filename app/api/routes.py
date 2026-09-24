@@ -403,18 +403,9 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                     confidence=detection.get("match_confidence")
                 )
 
-            current_presence = db_manager.get_current_presence()
-            user_present = any(
-                p.get("user", {}).get("id") == detection["user_id"] and p.get("status") == "presente"
-                for p in current_presence
-            )
-
-            if not user_present:
-                db_manager.log_presence(
-                    user_id=detection["user_id"],
-                    status="entrada",
-                    camera_source=camera_id
-                )
+            # Abre a visita ou só atualiza "visto por último" (ver mark_seen).
+            # Antes consultava a presença de TODOS os usuários a cada detecção.
+            db_manager.mark_seen(user_id=detected_user_id, camera_source=camera_id)
 
             # --- INTEGRAÇÃO COM A PORTA ---
             # Duas condições, não uma: confiança suficiente E sinal de vivacidade.

@@ -26,8 +26,7 @@ def porta_espiada(monkeypatch):
 def sem_efeitos_colaterais(monkeypatch):
     """Neutraliza presença/e-mail; o foco do teste é só a porta."""
     logs = []
-    monkeypatch.setattr(api_routes.db_manager, "get_current_presence", lambda: [])
-    monkeypatch.setattr(api_routes.db_manager, "log_presence",
+    monkeypatch.setattr(api_routes.db_manager, "mark_seen",
                         lambda **kw: logs.append(("presence", kw)))
     monkeypatch.setattr(api_routes.db_manager, "log_access",
                         lambda **kw: logs.append(("access", kw)))

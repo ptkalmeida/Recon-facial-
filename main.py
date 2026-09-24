@@ -132,6 +132,11 @@ async def lifespan(app: FastAPI):
                 
                 # Limpa estados internos (last_log, confirmation_states)
                 api_routes.cleanup_internal_states()
+
+                # Grava a saída de quem não é visto há mais que o timeout.
+                encerradas = await asyncio.to_thread(db_manager.close_stale_presence)
+                if encerradas:
+                    logger.info("Presença: %d visita(s) encerrada(s) por timeout", encerradas)
                 
                 logger.debug("Limpeza periódica concluída")
             except Exception as e:

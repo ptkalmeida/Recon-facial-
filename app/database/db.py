@@ -1,12 +1,13 @@
 import os
 import json
 import logging
+import threading
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import (
-    create_engine, event, Column, Integer, String, Float, DateTime, Boolean,
-    Text, ForeignKey, Enum, JSON, Index
+    create_engine, event, inspect, text, Column, Integer, String, Float, DateTime,
+    Boolean, Text, ForeignKey, Enum, JSON, Index
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, joinedload
 from sqlalchemy.sql import func
@@ -121,6 +122,9 @@ class PresenceRecord(Base):
     status = Column(String(50), nullable=False)
     check_in = Column(DateTime, nullable=True)
     check_out = Column(DateTime, nullable=True)
+    #: Última vez em que a pessoa foi vista nesta visita. Nulo em registros
+    #: anteriores à coluna (ver `_migrar_schema`).
+    last_seen = Column(DateTime, nullable=True)
     camera_source = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=func.now())
 
@@ -138,6 +142,7 @@ class PresenceRecord(Base):
             "status": self.status,
             "check_in": self.check_in.isoformat() if self.check_in else None,
             "check_out": self.check_out.isoformat() if self.check_out else None,
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "camera_source": self.camera_source,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
@@ -165,6 +170,29 @@ class Camera(Base):
             "location": self.location,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
+
+
+#: Colunas acrescentadas depois da criação original das tabelas. `create_all`
+#: cria tabela nova mas não altera tabela existente, então um banco já instalado
+#: precisa do ADD COLUMN. Só acréscimo de coluna anulável: é idempotente e não
+#: toca em dado existente. (Alembic seria exagero para isso - e exigiria marcar o
+#: banco atual como baseline antes do primeiro upgrade.)
+MIGRACOES_DE_COLUNA = [
+    ("presence_records", "last_seen", "DATETIME"),
+]
+
+
+def _migrar_schema(engine) -> None:
+    inspetor = inspect(engine)
+    tabelas = set(inspetor.get_table_names())
+    with engine.begin() as conn:
+        for tabela, coluna, tipo in MIGRACOES_DE_COLUNA:
+            if tabela not in tabelas:
+                continue
+            existentes = {c["name"] for c in inspetor.get_columns(tabela)}
+            if coluna not in existentes:
+                logger.info("Migração: adicionando %s.%s", tabela, coluna)
+                conn.execute(text(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}"))
 
 
 #: Espera por um lock de escrita antes de desistir com "database is locked".
@@ -220,6 +248,10 @@ class DatabaseManager:
             lambda conn, reg: _configurar_conexao_sqlite(conn, reg, usar_wal),
         )
         Base.metadata.create_all(self.engine)
+        _migrar_schema(self.engine)
+        # Serializa mark_seen: duas detecções simultâneas da mesma pessoa não
+        # podem abrir duas visitas.
+        self._presence_lock = threading.Lock()
         self.SessionLocal = sessionmaker(
             autocommit=False,
             autoflush=False,
@@ -400,6 +432,78 @@ class DatabaseManager:
             session.flush()
             return record
 
+    @staticmethod
+    def _presence_timeout() -> float:
+        return settings_dict.get("presence", {}).get("timeout_seconds", 60)
+
+    def mark_seen(self, user_id: int, camera_source: Optional[str] = None) -> PresenceRecord:
+        """Registra que a pessoa foi vista agora.
+
+        Uma visita é um registro só: a entrada cria o registro, e cada nova
+        detecção atualiza `last_seen`. Antes, a presença dependia da idade do
+        registro de entrada - quem ficava parado diante da câmera virava
+        "ausente" depois do timeout e ganhava uma "entrada" nova a cada minuto,
+        e nunca se gravava saída.
+
+        Se a última visita já passou do timeout, ela é encerrada (status
+        "saida", `check_out` = última vez visto) e uma nova começa.
+        """
+        timeout = self._presence_timeout()
+        with self._presence_lock, self.session() as session:
+            agora = datetime.now()
+            ultimo = (
+                session.query(PresenceRecord)
+                .filter(PresenceRecord.user_id == user_id)
+                .order_by(PresenceRecord.id.desc())
+                .first()
+            )
+            if ultimo is not None and ultimo.status == "entrada":
+                visto = ultimo.last_seen or ultimo.created_at
+                if visto and (agora - visto).total_seconds() < timeout:
+                    ultimo.last_seen = agora
+                    session.flush()
+                    return ultimo
+                if ultimo.last_seen is not None:
+                    self._encerrar_visita(ultimo)
+
+            visita = PresenceRecord(
+                user_id=user_id,
+                status="entrada",
+                check_in=agora,
+                last_seen=agora,
+                camera_source=camera_source,
+            )
+            session.add(visita)
+            session.flush()
+            return visita
+
+    @staticmethod
+    def _encerrar_visita(registro: PresenceRecord) -> None:
+        registro.status = "saida"
+        registro.check_out = registro.last_seen
+
+    def close_stale_presence(self) -> int:
+        """Encerra visitas sem detecção há mais que o timeout. Devolve quantas.
+
+        Só mexe em registros com `last_seen` (criados por mark_seen). Registros
+        antigos, anteriores à coluna, ficam como estão: eram eventos avulsos de
+        entrada, e reescrevê-los como visitas encerradas inventaria uma saída.
+        """
+        limite = datetime.now() - timedelta(seconds=self._presence_timeout())
+        with self._presence_lock, self.session() as session:
+            abertas = (
+                session.query(PresenceRecord)
+                .filter(
+                    PresenceRecord.status == "entrada",
+                    PresenceRecord.last_seen.isnot(None),
+                    PresenceRecord.last_seen < limite,
+                )
+                .all()
+            )
+            for registro in abertas:
+                self._encerrar_visita(registro)
+            return len(abertas)
+
     def get_presence_records(self, user_id: Optional[int] = None,
                             date: Optional[str] = None) -> List[PresenceRecord]:
         with self.session() as session:
@@ -470,24 +574,29 @@ class DatabaseManager:
                     PresenceRecord, PresenceRecord.id == latest_id_subquery.c.max_id
                 ).filter(User.is_active == True).all()
                 
-                timeout = settings_dict.get("presence", {}).get("timeout_seconds", 60)
+                timeout = self._presence_timeout()
                 now = datetime.now()
                 processed_results = []
-                
+
                 for user, last_record in results:
                     status = "ausente"
                     check_in = None
-                    
-                    if last_record and last_record.status == "entrada":
-                        if (now - last_record.created_at).total_seconds() < timeout:
+                    # Registros novos têm last_seen; os antigos só created_at.
+                    visto = None
+                    if last_record:
+                        visto = last_record.last_seen or last_record.created_at
+
+                    if last_record and last_record.status == "entrada" and visto:
+                        if (now - visto).total_seconds() < timeout:
                             status = "presente"
-                            check_in = last_record.created_at.strftime("%H:%M:%S")
-                    
+                            entrada = last_record.check_in or last_record.created_at
+                            check_in = entrada.strftime("%H:%M:%S")
+
                     processed_results.append({
                         "user": user.to_dict(),
                         "status": status,
                         "check_in": check_in,
-                        "last_seen": last_record.created_at.isoformat() if last_record else None
+                        "last_seen": visto.isoformat() if visto else None
                     })
                     
                 return processed_results
