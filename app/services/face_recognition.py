@@ -64,6 +64,20 @@ class FaceDetection:
     embedding: np.ndarray | None = None
 
 
+class FaceInferenceError(RuntimeError):
+    """O backend de reconhecimento falhou ao processar o frame.
+
+    Diferente de "nenhum rosto": falha não pode virar resultado negativo. Antes,
+    uma exceção do InsightFace fazia `detect_faces` cair em silêncio para o Haar
+    cascade naquele frame; o rosto do Haar não tem embedding, e o frame
+    terminava como "ninguém reconhecido" - sem nenhum sinal no /api/health.
+    """
+
+
+#: Falhas seguidas de inferência a partir das quais /api/health fica degraded.
+INFERENCE_FAILURES_DEGRADED_AFTER = 5
+
+
 def _serializado(metodo):
     """Executa o método sob o lock de inferência do serviço.
 
@@ -148,6 +162,9 @@ class FaceRecognitionService:
         
         # Frame history per camera for liveness detection
         self._frame_history: dict[str, np.ndarray] = {}
+
+        # Falhas de inferência seguidas (zera no primeiro frame processado).
+        self.consecutive_inference_failures = 0
         
     #: Backend de embedding sem valor biométrico real: `_extract_hog_features()`
     #: devolve um histograma de intensidade em grade, não um vetor de identidade.
@@ -183,7 +200,14 @@ class FaceRecognitionService:
             "configured_model": self.model_name,
             "configured_detector": self.detector_backend,
             "degraded": self.recognition_degraded,
+            # Só a contagem: o texto do erro fica no log (o health é público).
+            "consecutive_inference_failures": self.consecutive_inference_failures,
+            "inference_failing": self.inference_failing,
         }
+
+    @property
+    def inference_failing(self) -> bool:
+        return self.consecutive_inference_failures >= INFERENCE_FAILURES_DEGRADED_AFTER
 
     def _finish_initialization(self, detection_backend: str) -> bool:
         self.detection_backend = detection_backend
@@ -371,7 +395,7 @@ class FaceRecognitionService:
                     )
                 return detections
             except Exception as e:
-                logger.error(f"InsightFace detection error: {e}")
+                raise FaceInferenceError(f"InsightFace detection error: {e}") from e
         
         # Priority 1: DeepFace
         if HAS_DEEPFACE:
@@ -402,7 +426,7 @@ class FaceRecognitionService:
                     ))
                 return detections
             except Exception as e:
-                logger.error(f"DeepFace detection error: {e}")
+                raise FaceInferenceError(f"DeepFace detection error: {e}") from e
         
         # Priority 2: face_recognition (dlib)
         if HAS_FACE_RECOGNITION:
@@ -420,7 +444,7 @@ class FaceRecognitionService:
                         h=bottom - top
                     ))
             except Exception as e:
-                logger.error(f"Erro na detecção com face_recognition: {e}")
+                raise FaceInferenceError(f"Erro na detecção com face_recognition: {e}") from e
                 
         elif HAS_MEDIAPIPE:
             try:
@@ -439,7 +463,7 @@ class FaceRecognitionService:
                             h=int(bbox.height * h_frame)
                         ))
             except Exception as e:
-                logger.error(f"Erro na detecção com MediaPipe: {e}")
+                raise FaceInferenceError(f"Erro na detecção com MediaPipe: {e}") from e
         else:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = self.face_cascade.detectMultiScale(
@@ -806,8 +830,24 @@ class FaceRecognitionService:
     @_serializado
     def process_frame(self, frame: np.ndarray, camera_id: str = "default") -> dict[str, Any]:
         start_time = time.time()
-        
-        detections = self.detect_faces(frame)
+
+        try:
+            detections = self.detect_faces(frame)
+        except FaceInferenceError as e:
+            self.consecutive_inference_failures += 1
+            logger.error(
+                "%s (falha %d seguida)", e, self.consecutive_inference_failures
+            )
+            # "error" distingue do frame sem rosto; detections vazio mantém o
+            # contrato para quem só itera (nenhum efeito é aplicado).
+            return {
+                "frame_id": int(time.time() * 1000),
+                "faces_detected": 0,
+                "detections": [],
+                "error": "inference_failed",
+                "processing_time_ms": (time.time() - start_time) * 1000,
+            }
+        self.consecutive_inference_failures = 0
 
         results = {
             "frame_id": int(time.time() * 1000),

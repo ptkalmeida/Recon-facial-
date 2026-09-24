@@ -16,7 +16,7 @@ from app.models.schemas import (
     SystemStats, LoginRequest, LoginResponse, ExportRequest,
     validate_person_name
 )
-from app.services.face_recognition import FaceRecognitionService
+from app.services.face_recognition import FaceInferenceError, FaceRecognitionService
 from app.security.auth import (
     auth_manager, create_access_token, decode_token,
     authenticate_user
@@ -306,7 +306,17 @@ async def register_user_with_face(
         
         conteudos = [await img_file.read() for img_file in images]
         # Inferência fora do event loop: são segundos de CPU por foto.
-        embeddings = await run_in_threadpool(_embeddings_from_images, conteudos)
+        try:
+            embeddings = await run_in_threadpool(_embeddings_from_images, conteudos)
+        except FaceInferenceError as exc:
+            # Falha do modelo não é "foto sem rosto": desfaz o usuário recém-
+            # criado (antes ficava no banco, sem rosto) e diz o que houve.
+            logger.error(f"Cadastro de {name!r} interrompido: {exc}")
+            db_manager.delete_user(user.id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="O serviço de reconhecimento falhou ao processar as fotos. Tente novamente."
+            )
 
         if not embeddings:
             db_manager.delete_user(user.id)
@@ -644,6 +654,8 @@ async def health_check():
     # o serviço cai para um fallback. Antes daqui sair o modelo do config.yaml,
     # /api/health anunciava "Facenet512" enquanto rodava Haar cascade + HOG.
     recognition = face_service.get_backend_info()
+    if recognition["inference_failing"]:
+        status = "degraded"
     if recognition["degraded"]:
         status = "degraded"
         recognition["warning"] = (
