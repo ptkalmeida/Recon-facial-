@@ -4,6 +4,7 @@ import cv2
 from typing import Optional, List
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 
@@ -243,6 +244,26 @@ async def register_user_with_face_alias(
     return await register_user_with_face(name, email, images, current_user)
 
 
+def _embeddings_from_images(conteudos: List[bytes]) -> List[list]:
+    """Decodifica as fotos do cadastro e extrai um embedding de cada uma."""
+    embeddings = []
+    for contents in conteudos:
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            continue
+
+        detections = face_service.detect_faces(img)
+        if not detections:
+            continue
+
+        embedding = face_service.extract_embedding(img, detections[0])
+        if embedding is not None:
+            embeddings.append(embedding.tolist())
+    return embeddings
+
+
 async def register_user_with_face(
     name: str = Form(...),
     email: Optional[str] = Form(None),
@@ -272,23 +293,10 @@ async def register_user_with_face(
         
         user = db_manager.create_user(name=name, email=email, role="user")
         
-        embeddings = []
-        for img_file in images:
-            contents = await img_file.read()
-            nparr = np.frombuffer(contents, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if img is None:
-                continue
-                
-            detections = face_service.detect_faces(img)
-            if not detections:
-                continue
-                
-            embedding = face_service.extract_embedding(img, detections[0])
-            if embedding is not None:
-                embeddings.append(embedding.tolist())
-        
+        conteudos = [await img_file.read() for img_file in images]
+        # Inferência fora do event loop: são segundos de CPU por foto.
+        embeddings = await run_in_threadpool(_embeddings_from_images, conteudos)
+
         if not embeddings:
             db_manager.delete_user(user.id)
             raise HTTPException(
@@ -464,14 +472,27 @@ async def detect_faces(
         )
 
     contents = await image.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # A inferência leva ~0,9 s em CPU. Rodando no event loop (como era), o
+    # servidor inteiro parava a cada frame: /api/health, o polling do dashboard,
+    # o login - tudo esperava o modelo terminar.
+    results = await run_in_threadpool(_detect_and_handle, contents, camera_id)
 
-    if frame is None:
+    if results is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Imagem inválida"
         )
+
+    return results
+
+
+def _detect_and_handle(contents: bytes, camera_id: Optional[str]) -> Optional[dict]:
+    """Parte bloqueante do /recognition/detect: decodifica, infere e grava."""
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return None
 
     results = face_service.process_frame(frame, camera_id or "webcam")
 
@@ -541,11 +562,11 @@ async def export_data(
         )
     
     if request.format == "xlsx":
-        file_bytes = generate_excel_report(data, request.export_type)
+        file_bytes = await run_in_threadpool(generate_excel_report, data, request.export_type)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename = f"relatorio_{request.export_type}_{datetime.now().strftime('%Y%m%d')}.xlsx"
     elif request.format == "pdf":
-        file_bytes = generate_pdf_report(data, request.export_type)
+        file_bytes = await run_in_threadpool(generate_pdf_report, data, request.export_type)
         media_type = "application/pdf"
         filename = f"relatorio_{request.export_type}_{datetime.now().strftime('%Y%m%d')}.pdf"
     else:

@@ -1,3 +1,4 @@
+import functools
 import logging
 import threading
 import time
@@ -63,6 +64,22 @@ class FaceDetection:
     embedding: np.ndarray | None = None
 
 
+def _serializado(metodo):
+    """Executa o método sob o lock de inferência do serviço.
+
+    O modelo é chamado de mais de um lugar ao mesmo tempo: requisições HTTP (em
+    threads do pool) e a thread da câmera do servidor. Uma inferência por vez
+    deixa a latência previsível em CPU e protege o estado mutável de cada
+    chamada (`_frame_history` da vivacidade). RLock porque `process_frame`
+    chama `detect_faces`/`extract_embedding`, que também são serializados.
+    """
+    @functools.wraps(metodo)
+    def envoltorio(self, *args, **kwargs):
+        with self._inference_lock:
+            return metodo(self, *args, **kwargs)
+    return envoltorio
+
+
 @dataclass
 class FaceQualityMetrics:
     """Quality metrics for a detected face."""
@@ -109,6 +126,7 @@ class FaceRecognitionService:
         
         self._initialized = False
         self._lock = threading.Lock()
+        self._inference_lock = threading.RLock()
 
         # Backend REALMENTE em uso, preenchido por initialize(). `model_name`/
         # `detector_backend` acima são o que foi *pedido* na configuração - se a
@@ -318,6 +336,7 @@ class FaceRecognitionService:
             return embedding / norm
         return embedding
     
+    @_serializado
     def detect_faces(self, frame: np.ndarray) -> list[FaceDetection]:
         """Detect faces using available backend (DeepFace priority)."""
         detections = []
@@ -472,6 +491,7 @@ class FaceRecognitionService:
             logger.error(f"Error assessing face quality: {e}")
             return FaceQualityMetrics(0, 0, 0, 0, False)
 
+    @_serializado
     def extract_embedding(self, frame: np.ndarray, face_detection: FaceDetection,
                           skip_quality_check: bool = False) -> np.ndarray | None:
         """Extract face embedding using available backend (DeepFace priority)."""
@@ -746,6 +766,7 @@ class FaceRecognitionService:
             
         return result
     
+    @_serializado
     def process_frame(self, frame: np.ndarray, camera_id: str = "default") -> dict[str, Any]:
         start_time = time.time()
         
