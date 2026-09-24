@@ -1,0 +1,38 @@
+# Suíte automatizada a cada push e pull request.
+#
+# Roda sem GPU, sem câmera e sem o modelo de reconhecimento: os testes usam
+# stubs e banco temporário (tests/conftest.py). A suíte de navegador
+# (tests/browser, Playwright) fica de fora - ver tests/browser/README.md.
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      # opencv-python (não headless) precisa da libGL no Ubuntu.
+      - name: Dependências do sistema
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      - name: Dependências Python
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Testes
+        # Segredos descartáveis, só para a suíte: não há .env no CI.
+        env:
+          ENVIRONMENT: testing
+          JWT_SECRET_KEY: ci-somente-testes-nao-use-em-producao-0123456789
+          ADMIN_PASSWORD: Ci-Somente-Testes-123!
+          EMBEDDING_ENCRYPTION_KEY: ci-somente-testes-chave-embeddings
+        run: python -m pytest -q tests --ignore=tests/browser
