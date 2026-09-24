@@ -133,7 +133,11 @@ variável de ambiente  >  .env  >  config.yaml  >  default do código
 ```
 
 Use o `config.yaml` para a configuração versionada da instalação e o `.env`
-para segredos e ajustes por máquina. O mapeamento entre o formato aninhado do
+para segredos e ajustes por máquina.
+
+Caminhos relativos (`DATABASE_PATH`, `LOG_FILE`) são resolvidos a partir da
+raiz do projeto, não do diretório de onde o `main.py` foi chamado — rodar por um
+atalho ou serviço de outra pasta usa o mesmo banco. O mapeamento entre o formato aninhado do
 YAML e os campos de `Settings` é explícito (`YAML_TO_FIELD` em
 [app/config.py](app/config.py)); chave não mapeada é reportada, não ignorada em
 silêncio, e há teste que reprova chave órfã.

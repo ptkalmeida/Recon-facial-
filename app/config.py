@@ -11,8 +11,28 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+# Raiz do projeto: âncora de todo caminho relativo da configuração. Sem ela,
+# `data/face_recognition.db` era resolvido a partir do diretório atual — rodar
+# `python C:\...\main.py` de outra pasta (atalho, serviço, agendador) criava um
+# banco NOVO e vazio ali, sem nenhum rosto cadastrado, e um salt novo.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_project_path(value: str) -> str:
+    """Caminho relativo passa a ser relativo à raiz do projeto, não ao CWD.
+
+    Absolutos ficam como estão, e `:memory:` (SQLite em memória) também.
+    """
+    if not value or value == ":memory:":
+        return value
+    caminho = Path(value)
+    if caminho.is_absolute():
+        return str(caminho)
+    return str(PROJECT_ROOT / caminho)
+
+
 # Load .env file first
-env_path = Path(__file__).parent.parent / ".env"
+env_path = PROJECT_ROOT / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
@@ -112,7 +132,7 @@ class Settings(BaseSettings):
     server_camera_interval_seconds: float = 1.0
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(env_path),
         env_file_encoding="utf-8",
         extra="allow",
         case_sensitive=False,
@@ -135,6 +155,11 @@ class Settings(BaseSettings):
             YamlConfigSource(settings_cls),
             file_secret_settings,
         )
+
+    @field_validator("database_path", "log_file")
+    @classmethod
+    def _ancorar_na_raiz(cls, v):
+        return resolve_project_path(v)
 
     @field_validator("jwt_secret_key")
     @classmethod

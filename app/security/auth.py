@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # Import secure settings
-from app.config import settings
+from app.config import PROJECT_ROOT, settings
 
 # Security configuration from environment variables
 SECRET_KEY = settings.jwt_secret_key
@@ -127,7 +127,10 @@ class SimpleAuthManager:
     """Secure authentication manager with thread-safe in-memory rate limiting."""
     
     def __init__(self):
-        self.auth_file = Path("data/admin_auth.json")
+        # Ancorado na raiz do projeto: relativo ao diretório atual, rodar a
+        # aplicação de outra pasta criava um admin_auth.json novo, a partir da
+        # senha do .env, e a senha trocada pela interface "sumia".
+        self.auth_file = PROJECT_ROOT / "data" / "admin_auth.json"
         self._lock = threading.RLock()
         self._initialized = False
         self._RATE_KEY = "admin_auth_attempts"
