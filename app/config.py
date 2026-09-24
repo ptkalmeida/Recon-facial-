@@ -4,7 +4,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -47,13 +47,13 @@ class Settings(BaseSettings):
     
     # Server
     host: str = "0.0.0.0"
-    port: int = 8001
+    port: int = Field(8001, ge=1, le=65535)
     reload: bool = False
     
     # Security - Critical: These MUST be set via environment variables in production!
     jwt_secret_key: str = Field(default_factory=lambda: os.getenv("JWT_SECRET_KEY", ""))
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = Field(60, ge=1)
     
     admin_username: str = Field(default_factory=lambda: os.getenv("ADMIN_USERNAME", "admin"))
     admin_password: str = Field(default_factory=lambda: os.getenv("ADMIN_PASSWORD", ""))
@@ -72,10 +72,10 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
     
     # Rate Limiting
-    rate_limit_max_requests: int = 100
-    rate_limit_window_seconds: int = 60
-    auth_max_attempts: int = 5
-    auth_block_duration: int = 900
+    rate_limit_max_requests: int = Field(100, ge=1)
+    rate_limit_window_seconds: int = Field(60, ge=1)
+    auth_max_attempts: int = Field(5, ge=1)
+    auth_block_duration: int = Field(900, ge=0)
     
     # Database
     database_path: str = "data/face_recognition.db"
@@ -88,15 +88,15 @@ class Settings(BaseSettings):
     face_model: str = "Facenet512"
     face_detector: str = "retinaface"
     face_distance_metric: str = "cosine"
-    face_threshold: float = 0.4
+    face_threshold: float = Field(0.4, gt=0, le=2)
     # Histerese de identidade (ver FaceRecognitionService.verify_face): depois
     # de um match ESTRITO (< face_threshold), a mesma pessoa na mesma câmera
     # continua reconhecida até esta distância, por face_hold_seconds. Só vale
     # para presença e log - a porta exige o match estrito.
-    face_hold_threshold: float = 0.55
-    face_hold_seconds: float = 3.0
+    face_hold_threshold: float = Field(0.55, gt=0, le=2)
+    face_hold_seconds: float = Field(3.0, ge=0)
     face_enforce_detection: bool = True
-    face_detector_threshold: float = 0.7
+    face_detector_threshold: float = Field(0.7, ge=0, le=1)
     face_align: bool = True
     face_normalization: str = "base"
     # Fallback de "embedding" por histograma de intensidade: não identifica
@@ -105,13 +105,13 @@ class Settings(BaseSettings):
     allow_insecure_hog_embeddings: bool = False
     # Nitidez mínima (variância do Laplaciano) para aceitar um rosto. Calibrado
     # com fotos reais - ver FaceRecognitionService.min_sharpness.
-    face_min_sharpness: float = 40.0
-    face_recognition_log_cooldown_seconds: int = 5
-    face_recognition_confirmation_window_seconds: float = 2.5
-    face_recognition_confirmation_min_frames: int = 3
+    face_min_sharpness: float = Field(40.0, ge=0)
+    face_recognition_log_cooldown_seconds: int = Field(5, ge=0)
+    face_recognition_confirmation_window_seconds: float = Field(2.5, gt=0)
+    face_recognition_confirmation_min_frames: int = Field(3, ge=1)
     
     # Porta física (controle de acesso)
-    door_min_confidence: float = 0.8
+    door_min_confidence: float = Field(0.8, ge=0, le=1)
     # Exige sinal de vivacidade para acionar a porta. A checagem é modesta (barra
     # imagem estática, não ataque de apresentação elaborado - ver SECURITY.md),
     # mas antes o resultado dela era simplesmente descartado.
@@ -122,18 +122,18 @@ class Settings(BaseSettings):
     # LOG_LEVEL não tinha efeito e a aplicação nunca escrevia log em disco.
     log_level: str = "INFO"
     log_file: str = "logs/face_recognition.log"
-    log_max_size_mb: int = 10
-    log_backup_count: int = 5
+    log_max_size_mb: int = Field(10, ge=1)
+    log_backup_count: int = Field(5, ge=0)
 
     # Email alerts (unknown face detected)
     alerts_enabled: bool = False
     smtp_host: str = ""
-    smtp_port: int = 587
+    smtp_port: int = Field(587, ge=1, le=65535)
     smtp_user: str = ""
     smtp_password: str = Field(default_factory=lambda: os.getenv("SMTP_PASSWORD", ""))
     smtp_from: str = ""
     alert_email_to: str = ""
-    alert_cooldown_seconds: int = 600
+    alert_cooldown_seconds: int = Field(600, ge=0)
     # Webhook de alerta (opcional): POST JSON assinado com HMAC-SHA256 em
     # X-Signature, sobre "<X-Timestamp>.<corpo>" - o receptor valida a origem e
     # recusa reenvio (replay) de mensagem antiga.
@@ -141,21 +141,21 @@ class Settings(BaseSettings):
     alert_webhook_secret: str = Field(default_factory=lambda: os.getenv("ALERT_WEBHOOK_SECRET", ""))
     # Câmera do servidor sem frames por este tempo gera alerta "camera_offline"
     # (e "camera_online" quando volta). Quedas mais curtas não alertam.
-    camera_offline_alert_seconds: int = 60
+    camera_offline_alert_seconds: int = Field(60, ge=1)
 
     # Retenção (dias). 0 = guardar para sempre. Logs de acesso e presença são
     # registro de auditoria e dado pessoal (LGPD): o prazo é decisão de quem
     # opera o sistema, então vêm desligados - o comportamento de sempre. O
     # outbox de alertas é tabela técnica: apaga alertas já resolvidos.
-    retention_access_log_days: int = 0
-    retention_presence_days: int = 0
-    retention_alert_days: int = 90
+    retention_access_log_days: int = Field(0, ge=0)
+    retention_presence_days: int = Field(0, ge=0)
+    retention_alert_days: int = Field(90, ge=0)
 
     # Optional server-side camera capture (local webcam index or RTSP/file URL)
     server_camera_enabled: bool = False
     server_camera_source: str = ""
     server_camera_id: str = "server-cam"
-    server_camera_interval_seconds: float = 1.0
+    server_camera_interval_seconds: float = Field(1.0, gt=0)
     
     model_config = SettingsConfigDict(
         env_file=str(env_path),
@@ -181,6 +181,17 @@ class Settings(BaseSettings):
             YamlConfigSource(settings_cls),
             file_secret_settings,
         )
+
+    @model_validator(mode="after")
+    def _faixas_coerentes(self):
+        # A faixa de histerese fica ACIMA do limiar de match estrito; invertida,
+        # "manter" seria mais rígido que "entrar" e a histerese não faria nada.
+        if self.face_hold_threshold < self.face_threshold:
+            raise ValueError(
+                f"FACE_HOLD_THRESHOLD ({self.face_hold_threshold}) não pode ser menor "
+                f"que FACE_THRESHOLD ({self.face_threshold})"
+            )
+        return self
 
     @field_validator("database_path", "log_file")
     @classmethod
@@ -324,6 +335,16 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 
 
 settings = Settings()
+
+def yaml_unknown_keys() -> list[str]:
+    """Chaves do config.yaml que nenhum campo lê (erro de digitação, chave velha).
+
+    Não derruba o boot - o resto da configuração continua válido -, mas o
+    main.py avisa no log: uma chave ignorada em silêncio parece configuração
+    que vale e não vale.
+    """
+    return _flatten_yaml(load_yaml_config())[1]
+
 
 def get_trusted_proxies() -> set[str]:
     """Peers cujos cabeçalhos de IP encaminhado podem ser confiados."""

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.api import routes as api_routes
-from app.config import settings, settings_dict, validate_security_settings
+from app.config import settings, settings_dict, validate_security_settings, yaml_unknown_keys
 from app.database.db import db_manager
 from app.security.middleware import (
     GeneralRateLimitMiddleware,
@@ -205,6 +205,9 @@ is_secure, warnings = validate_security_settings()
 if warnings:
     for warning in warnings:
         logger.warning(f"Security: {warning}")
+
+for chave in yaml_unknown_keys():
+    logger.warning("config.yaml: chave '%s' não é lida por nenhuma configuração (ignorada)", chave)
 
 app = FastAPI(
     title=settings.app_name,
