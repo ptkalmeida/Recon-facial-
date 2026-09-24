@@ -708,7 +708,8 @@ class FaceRecognitionService:
         return calibrated
     
     def check_liveness(self, frame: np.ndarray, face_detection: FaceDetection,
-                       camera_id: str = "default") -> dict[str, Any]:
+                       camera_id: str = "default",
+                       store_frame: bool = True) -> dict[str, Any]:
         """Check if the face is live using frame-to-frame motion analysis.
 
         Compares the current frame against the previous frame for this camera_id.
@@ -724,6 +725,9 @@ class FaceRecognitionService:
             frame: Current BGR frame.
             face_detection: Detected face bounding box.
             camera_id: Camera identifier for per-camera frame history.
+            store_frame: Guarda `frame` como referência da próxima comparação.
+                `process_frame` passa False e guarda uma vez só, depois de todos
+                os rostos do frame - ver o comentário lá.
 
         Returns:
             Dict with is_live, details.
@@ -758,9 +762,9 @@ class FaceRecognitionService:
                 # perfectly static photo, nothing more (see docstring above).
                 result["is_live"] = face_motion > 4.0
             
-            # Store current frame for next comparison (per camera)
-            self._frame_history[camera_id] = frame.copy()
-                
+            if store_frame:
+                self._frame_history[camera_id] = frame.copy()
+
         except Exception as e:
             logger.error(f"Erro no check de liveness: {e}")
             
@@ -778,6 +782,7 @@ class FaceRecognitionService:
             "detections": [],
         }
 
+        vivacidade_checada = False
         for detection in detections:
             embedding = self.extract_embedding(frame, detection)
             
@@ -786,8 +791,15 @@ class FaceRecognitionService:
                 
             user_id, confidence, match_type = self.verify_face(embedding)
             
-            # Use persistent frame history per camera (not local var)
-            liveness_result = self.check_liveness(frame, detection, camera_id)
+            # Todos os rostos do frame são comparados com o frame ANTERIOR. Antes,
+            # o frame era guardado dentro de check_liveness a cada rosto: o
+            # segundo rosto se comparava com o próprio frame atual, dava
+            # movimento zero e nunca passava na vivacidade - com duas pessoas na
+            # câmera, a segunda jamais abria a porta.
+            liveness_result = self.check_liveness(
+                frame, detection, camera_id, store_frame=False
+            )
+            vivacidade_checada = True
             
             result_entry = {
                 "x": detection.x,
@@ -804,6 +816,9 @@ class FaceRecognitionService:
             }
             
             results["detections"].append(result_entry)
+
+        if vivacidade_checada and self.anti_spoofing_enabled:
+            self._frame_history[camera_id] = frame.copy()
 
         results["processing_time_ms"] = (time.time() - start_time) * 1000
 
