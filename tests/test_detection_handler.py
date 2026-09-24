@@ -12,6 +12,16 @@ def _known_detection(user_id=1, user_name="Alice", confidence=0.95):
     }
 
 
+def _emit_espiao(calls):
+    """Registra (câmera, confiança) de cada alerta de desconhecido enfileirado."""
+    def emit(event_type, payload, cooldown_key=None):
+        assert event_type == "unknown_detected"
+        assert cooldown_key == payload["camera_id"]
+        calls["notify"].append((payload["camera_id"], payload["confidence"]))
+        return True
+    return emit
+
+
 def _unknown_detection(confidence=0.2):
     return {
         "user_id": None,
@@ -94,23 +104,13 @@ def test_unknown_detection_logs_and_notifies(monkeypatch):
     monkeypatch.setattr(
         api_routes.db_manager, "log_access", lambda **kw: calls["log_access"].append(kw)
     )
-    monkeypatch.setattr(
-        api_routes.email_notifier,
-        "notify_unknown_detected",
-        lambda camera_id, confidence: calls["notify"].append((camera_id, confidence)),
-    )
+    monkeypatch.setattr(api_routes.alert_service, "emit", _emit_espiao(calls))
 
     results = {"detections": [_unknown_detection(confidence=0.3)]}
     api_routes.handle_detection_results(results, "cam-1")
 
     assert len(calls["log_access"]) == 1
     assert calls["log_access"][0]["action"] == "unknown_detected"
-
-    # notify_unknown_detected runs in a background thread; wait briefly for it.
-    deadline = time.monotonic() + 2
-    while not calls["notify"] and time.monotonic() < deadline:
-        time.sleep(0.02)
-
     assert calls["notify"] == [("cam-1", 0.3)]
 
 
@@ -122,16 +122,11 @@ def test_unknown_not_confirmed_yet_is_silent(monkeypatch):
     monkeypatch.setattr(
         api_routes.db_manager, "log_access", lambda **kw: calls["log_access"].append(kw)
     )
-    monkeypatch.setattr(
-        api_routes.email_notifier,
-        "notify_unknown_detected",
-        lambda camera_id, confidence: calls["notify"].append((camera_id, confidence)),
-    )
+    monkeypatch.setattr(api_routes.alert_service, "emit", _emit_espiao(calls))
 
     api_routes.handle_detection_results(
         {"detections": [_unknown_detection(confidence=0.3)]}, "cam-1"
     )
-    time.sleep(0.1)
 
     assert calls == {"log_access": [], "notify": []}
 
@@ -148,19 +143,12 @@ def test_varios_desconhecidos_no_frame_sao_uma_decisao(monkeypatch):
     monkeypatch.setattr(
         api_routes.db_manager, "log_access", lambda **kw: calls["log_access"].append(kw)
     )
-    monkeypatch.setattr(
-        api_routes.email_notifier,
-        "notify_unknown_detected",
-        lambda camera_id, confidence: calls["notify"].append((camera_id, confidence)),
-    )
+    monkeypatch.setattr(api_routes.alert_service, "emit", _emit_espiao(calls))
 
     api_routes.handle_detection_results(
         {"detections": [_unknown_detection(0.2), _unknown_detection(0.7), _unknown_detection(0.4)]},
         "cam-9",
     )
-    deadline = time.monotonic() + 2
-    while not calls["notify"] and time.monotonic() < deadline:
-        time.sleep(0.02)
 
     assert consultas == ["cam-9"]
     assert len(calls["log_access"]) == 3

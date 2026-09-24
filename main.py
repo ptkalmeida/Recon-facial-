@@ -28,6 +28,7 @@ from app.security.middleware import (
 )
 from app.security.rate_limiter import api_rate_limiter
 from app.security.redaction import CredentialRedactionFilter, redact_url_credentials
+from app.services.alerts import CameraOfflineMonitor
 from app.services.camera_worker import CameraWorker, resolve_camera_source
 
 def setup_logging() -> None:
@@ -144,6 +145,11 @@ async def lifespan(app: FastAPI):
 
     background_task = asyncio.create_task(cleanup_task())
 
+    alert_service = api_routes.alert_service
+    alert_service.start()
+    if alert_service.enabled:
+        logger.info("Alertas ativos nos canais: %s", ", ".join(alert_service.channel_names) or "nenhum")
+
     camera_worker = None
     camera_settings = settings_dict.get("server_camera", {})
     if camera_settings.get("enabled"):
@@ -151,13 +157,21 @@ async def lifespan(app: FastAPI):
         if source is None:
             logger.warning("SERVER_CAMERA_ENABLED=true mas SERVER_CAMERA_SOURCE não configurado - captura no servidor desativada")
         else:
+            camera_id = camera_settings.get("camera_id", "server-cam")
+            monitor = CameraOfflineMonitor(
+                alert_service,
+                threshold_seconds=settings_dict.get("alerts", {}).get("camera_offline_seconds", 60),
+            )
+            monitor.register(camera_id)
+            alert_service.add_tick_hook(monitor.check)
             camera_worker = CameraWorker(
                 source=source,
-                camera_id=camera_settings.get("camera_id", "server-cam"),
+                camera_id=camera_id,
                 interval_seconds=camera_settings.get("interval_seconds", 1.0),
                 face_service=face_service,
                 performance_tracker=api_routes.performance_tracker,
-                handle_results_fn=api_routes.handle_detection_results
+                handle_results_fn=api_routes.handle_detection_results,
+                status_listener=monitor.on_status,
             )
             camera_worker.start()
             api_routes.camera_worker = camera_worker
@@ -172,6 +186,7 @@ async def lifespan(app: FastAPI):
     background_task.cancel()
     if camera_worker:
         camera_worker.stop()
+    alert_service.stop()
 
 
 # Validate security settings on startup

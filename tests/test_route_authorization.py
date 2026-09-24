@@ -24,6 +24,7 @@ ADMIN_ONLY_ROUTES = [
     ("GET", "/api/presence/history"),
     ("POST", "/api/export"),
     ("POST", "/api/hardware/open-door"),
+    ("GET", "/api/alerts"),
 ]
 
 

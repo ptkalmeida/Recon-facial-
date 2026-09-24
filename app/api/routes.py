@@ -29,10 +29,10 @@ from app.utils.export import generate_excel_report, generate_pdf_report
 from app.services.hardware import door_manager
 from app.services.recognition_orchestrator import RecognitionOrchestrator, RecognitionAction
 from app.services.performance_tracker import PerformanceTracker
-from app.services.notifications import EmailNotifier
+from app.services.alerts import AlertService
+from app.services.notifications import build_channels
 from app.config import settings_dict
 import logging
-import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,15 @@ orchestrator = RecognitionOrchestrator(
     window_seconds=settings_dict.get("face_recognition", {}).get("confirmation_window_seconds", 2.5)
 )
 performance_tracker = PerformanceTracker()
-email_notifier = EmailNotifier(settings_dict.get("alerts", {}))
+_alerts_config = settings_dict.get("alerts", {})
+# Outbox de alertas (e-mail, webhook). O dispatcher é iniciado no lifespan do
+# main.py; aqui só se grava o alerta, o que é rápido e não se perde.
+alert_service = AlertService(
+    db_manager,
+    build_channels(_alerts_config),
+    enabled=_alerts_config.get("enabled", False),
+    cooldown_seconds=_alerts_config.get("cooldown_seconds", 600),
+)
 
 # Populated by main.py's lifespan startup once face_service.initialize() runs.
 service_status = {"model_ready": False, "model_error": None}
@@ -66,10 +74,8 @@ REQUIRE_LIVENESS_FOR_DOOR = _door.get("require_liveness", True)
 
 def cleanup_internal_states():
     """Clean up expired entries from internal tracking dictionaries to prevent memory leaks."""
-    now = datetime.now()
-    
-    # 1. Cleanup orchestrator
     orchestrator.cleanup()
+    alert_service.cleanup()
 
 
 
@@ -474,11 +480,18 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                 camera_source=camera_id,
                 confidence=detection.get("match_confidence")
             )
-        threading.Thread(
-            target=email_notifier.notify_unknown_detected,
-            args=(camera_id, max(d.get("match_confidence") or 0.0 for d in desconhecidos)),
-            daemon=True
-        ).start()
+        # Só grava no outbox; a entrega (com nova tentativa) é do dispatcher.
+        # Cooldown por câmera, como o e-mail já tinha.
+        camera = camera_id or "webcam"
+        alert_service.emit(
+            "unknown_detected",
+            {
+                "camera_id": camera,
+                "confidence": max(d.get("match_confidence") or 0.0 for d in desconhecidos),
+                "faces": len(desconhecidos),
+            },
+            cooldown_key=camera,
+        )
 
 
 @router.post("/recognition/detect")
@@ -622,6 +635,13 @@ async def manual_open_door(current_user: dict = Depends(require_admin)):
         ip_address="web_dashboard"
     )
     return {"message": "Comando enviado para a porta"}
+
+
+@router.get("/alerts")
+async def get_alert_events(limit: int = 100, current_user: dict = Depends(require_admin)):
+    """Histórico do outbox de alertas: o que foi enviado, o que falhou e por quê."""
+    eventos = db_manager.get_alert_events(limit=min(max(limit, 1), 500))
+    return [e.to_dict() for e in eventos]
 
 
 @router.get("/health")

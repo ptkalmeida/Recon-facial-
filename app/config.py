@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     alert_email_to: str = ""
     alert_cooldown_seconds: int = 600
+    # Webhook de alerta (opcional): POST JSON assinado com HMAC-SHA256 em
+    # X-Signature, sobre "<X-Timestamp>.<corpo>" - o receptor valida a origem e
+    # recusa reenvio (replay) de mensagem antiga.
+    alert_webhook_url: str = ""
+    alert_webhook_secret: str = Field(default_factory=lambda: os.getenv("ALERT_WEBHOOK_SECRET", ""))
+    # Câmera do servidor sem frames por este tempo gera alerta "camera_offline"
+    # (e "camera_online" quando volta). Quedas mais curtas não alertam.
+    camera_offline_alert_seconds: int = 60
 
     # Optional server-side camera capture (local webcam index or RTSP/file URL)
     server_camera_enabled: bool = False
@@ -380,7 +388,10 @@ settings_dict = {
         "smtp_password": settings.smtp_password,
         "smtp_from": settings.smtp_from,
         "alert_email_to": settings.alert_email_to,
-        "cooldown_seconds": settings.alert_cooldown_seconds
+        "cooldown_seconds": settings.alert_cooldown_seconds,
+        "webhook_url": settings.alert_webhook_url,
+        "webhook_secret": settings.alert_webhook_secret,
+        "camera_offline_seconds": settings.camera_offline_alert_seconds
     },
     "server_camera": {
         "enabled": settings.server_camera_enabled,

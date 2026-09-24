@@ -148,6 +148,48 @@ class PresenceRecord(Base):
         }
 
 
+class AlertEvent(Base):
+    """Outbox de alertas: uma linha por (evento, canal).
+
+    O alerta é gravado ANTES de qualquer tentativa de envio, e um dispatcher
+    separado entrega com nova tentativa (ver app/services/alerts.py). Antes, o
+    e-mail era disparado numa thread sem retorno: SMTP fora do ar = alerta
+    perdido, sem rastro.
+    """
+    __tablename__ = "alert_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(100), nullable=False)
+    channel = Column(String(50), nullable=False)
+    payload = Column(JSON, nullable=False)
+    #: pending (aguardando 1ª tentativa) | sent | failed (nova tentativa em
+    #: next_attempt_at, ou definitivo quando next_attempt_at é nulo)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    next_attempt_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    delivered_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_alert_due", "status", "next_attempt_at"),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "event_type": self.event_type,
+            "channel": self.channel,
+            "payload": self.payload,
+            "status": self.status,
+            "attempts": self.attempts,
+            "last_error": self.last_error,
+            "next_attempt_at": self.next_attempt_at.isoformat() if self.next_attempt_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "delivered_at": self.delivered_at.isoformat() if self.delivered_at else None,
+        }
+
+
 class Camera(Base):
     __tablename__ = "cameras"
 
@@ -503,6 +545,70 @@ class DatabaseManager:
             for registro in abertas:
                 self._encerrar_visita(registro)
             return len(abertas)
+
+    # --- Outbox de alertas ------------------------------------------------
+
+    def enqueue_alert(self, event_type: str, payload: Dict[str, Any],
+                      channels: List[str]) -> List[int]:
+        """Grava o alerta para cada canal; devolve os ids criados."""
+        agora = datetime.now()
+        with self.session() as session:
+            eventos = [
+                AlertEvent(event_type=event_type, channel=canal, payload=payload,
+                           status="pending", attempts=0, next_attempt_at=agora)
+                for canal in channels
+            ]
+            session.add_all(eventos)
+            session.flush()
+            return [e.id for e in eventos]
+
+    def claim_due_alerts(self, max_attempts: int, limit: int = 20) -> List[AlertEvent]:
+        """Alertas prontos para (nova) tentativa, mais antigos primeiro.
+
+        Não é um claim atômico: vale para UM dispatcher por banco, que é o caso
+        (um processo). Com vários processos, trocar por UPDATE ... RETURNING.
+        """
+        agora = datetime.now()
+        with self.session() as session:
+            return (
+                session.query(AlertEvent)
+                .filter(
+                    AlertEvent.status.in_(("pending", "failed")),
+                    AlertEvent.next_attempt_at.isnot(None),
+                    AlertEvent.next_attempt_at <= agora,
+                    AlertEvent.attempts < max_attempts,
+                )
+                .order_by(AlertEvent.id.asc())
+                .limit(limit)
+                .all()
+            )
+
+    def record_alert_attempt(self, alert_id: int, error: Optional[str],
+                             next_attempt_at: Optional[datetime]) -> None:
+        """Resultado de uma tentativa: `error=None` significa entregue."""
+        with self.session() as session:
+            evento = session.get(AlertEvent, alert_id)
+            if evento is None:
+                return
+            evento.attempts = (evento.attempts or 0) + 1
+            if error is None:
+                evento.status = "sent"
+                evento.delivered_at = datetime.now()
+                evento.last_error = None
+                evento.next_attempt_at = None
+            else:
+                evento.status = "failed"
+                evento.last_error = error
+                evento.next_attempt_at = next_attempt_at
+
+    def get_alert_events(self, limit: int = 100) -> List[AlertEvent]:
+        with self.session() as session:
+            return (
+                session.query(AlertEvent)
+                .order_by(AlertEvent.id.desc())
+                .limit(limit)
+                .all()
+            )
 
     def get_presence_records(self, user_id: Optional[int] = None,
                             date: Optional[str] = None) -> List[PresenceRecord]:

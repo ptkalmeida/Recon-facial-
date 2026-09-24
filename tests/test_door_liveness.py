@@ -30,8 +30,7 @@ def sem_efeitos_colaterais(monkeypatch):
                         lambda **kw: logs.append(("presence", kw)))
     monkeypatch.setattr(api_routes.db_manager, "log_access",
                         lambda **kw: logs.append(("access", kw)))
-    monkeypatch.setattr(api_routes.email_notifier, "notify_unknown_detected",
-                        lambda *a, **k: None)
+    monkeypatch.setattr(api_routes.alert_service, "emit", lambda *a, **k: False)
     # Orquestrador confirma de imediato, para não precisar de 3 frames.
     monkeypatch.setattr(api_routes.orchestrator, "handle_recognition",
                         lambda *a, **k: [api_routes.RecognitionAction.LOG_ACCESS])
