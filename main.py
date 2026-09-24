@@ -138,6 +138,17 @@ async def lifespan(app: FastAPI):
                 encerradas = await asyncio.to_thread(db_manager.close_stale_presence)
                 if encerradas:
                     logger.info("Presença: %d visita(s) encerrada(s) por timeout", encerradas)
+
+                # Retenção configurada (0 = guardar para sempre).
+                retencao = settings_dict.get("retention", {})
+                apagados = await asyncio.to_thread(
+                    db_manager.purge_expired,
+                    retencao.get("access_log_days", 0),
+                    retencao.get("presence_days", 0),
+                    retencao.get("alert_days", 0),
+                )
+                if any(apagados.values()):
+                    logger.info("Retenção: registros apagados %s", apagados)
                 
                 logger.debug("Limpeza periódica concluída")
             except Exception as e:

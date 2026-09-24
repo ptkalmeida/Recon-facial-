@@ -143,6 +143,14 @@ class Settings(BaseSettings):
     # (e "camera_online" quando volta). Quedas mais curtas não alertam.
     camera_offline_alert_seconds: int = 60
 
+    # Retenção (dias). 0 = guardar para sempre. Logs de acesso e presença são
+    # registro de auditoria e dado pessoal (LGPD): o prazo é decisão de quem
+    # opera o sistema, então vêm desligados - o comportamento de sempre. O
+    # outbox de alertas é tabela técnica: apaga alertas já resolvidos.
+    retention_access_log_days: int = 0
+    retention_presence_days: int = 0
+    retention_alert_days: int = 90
+
     # Optional server-side camera capture (local webcam index or RTSP/file URL)
     server_camera_enabled: bool = False
     server_camera_source: str = ""
@@ -392,6 +400,11 @@ settings_dict = {
         "webhook_url": settings.alert_webhook_url,
         "webhook_secret": settings.alert_webhook_secret,
         "camera_offline_seconds": settings.camera_offline_alert_seconds
+    },
+    "retention": {
+        "access_log_days": settings.retention_access_log_days,
+        "presence_days": settings.retention_presence_days,
+        "alert_days": settings.retention_alert_days
     },
     "server_camera": {
         "enabled": settings.server_camera_enabled,

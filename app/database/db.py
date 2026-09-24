@@ -546,6 +546,51 @@ class DatabaseManager:
                 self._encerrar_visita(registro)
             return len(abertas)
 
+    # --- Retenção -----------------------------------------------------------
+
+    #: Linhas apagadas por transação: uma transação gigante trava o banco para
+    #: as outras escritas durante todo o DELETE.
+    RETENTION_BATCH = 5000
+
+    def _apagar_em_lotes(self, modelo, filtros) -> int:
+        total = 0
+        while True:
+            with self.session() as session:
+                ids = [
+                    linha[0] for linha in
+                    session.query(modelo.id).filter(*filtros).limit(self.RETENTION_BATCH).all()
+                ]
+                if not ids:
+                    return total
+                session.query(modelo).filter(modelo.id.in_(ids)).delete(synchronize_session=False)
+                total += len(ids)
+
+    def purge_expired(self, access_log_days: int = 0, presence_days: int = 0,
+                      alert_days: int = 0) -> Dict[str, int]:
+        """Apaga registros mais velhos que o prazo de cada tabela (0 = nunca).
+
+        Alertas: só os resolvidos (entregues, ou desistidos sem nova tentativa
+        agendada) - um alerta pendente nunca é apagado por idade.
+        """
+        agora = datetime.now()
+        apagados = {"access_logs": 0, "presence_records": 0, "alert_events": 0}
+        if access_log_days > 0:
+            limite = agora - timedelta(days=access_log_days)
+            apagados["access_logs"] = self._apagar_em_lotes(
+                AccessLog, [AccessLog.created_at < limite])
+        if presence_days > 0:
+            limite = agora - timedelta(days=presence_days)
+            apagados["presence_records"] = self._apagar_em_lotes(
+                PresenceRecord, [PresenceRecord.created_at < limite])
+        if alert_days > 0:
+            limite = agora - timedelta(days=alert_days)
+            apagados["alert_events"] = self._apagar_em_lotes(AlertEvent, [
+                AlertEvent.created_at < limite,
+                AlertEvent.next_attempt_at.is_(None),
+                AlertEvent.status.in_(("sent", "failed")),
+            ])
+        return apagados
+
     # --- Outbox de alertas ------------------------------------------------
 
     def enqueue_alert(self, event_type: str, payload: Dict[str, Any],
