@@ -367,4 +367,4 @@ O código já inclui estrutura para:
 
 ## Licença
 
-MIT License - Uso livre para fins comerciais e educacionais.
+MIT License - Uso livre para fins comerciais e educacionais. Texto completo em [LICENSE](LICENSE).
