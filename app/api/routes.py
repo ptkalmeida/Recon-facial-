@@ -16,7 +16,9 @@ from app.models.schemas import (
     SystemStats, LoginRequest, LoginResponse, ExportRequest,
     validate_person_name
 )
-from app.services.face_recognition import FaceInferenceError, FaceRecognitionService
+from app.services.face_recognition import (
+    FaceInferenceError, FaceRecognitionService, dedupe_embeddings, dedupe_image_bytes,
+)
 from app.security.auth import (
     auth_manager, create_access_token, decode_token,
     authenticate_user
@@ -308,32 +310,54 @@ async def register_user_with_face(
                 detail="Usuário já existe"
             )
         
-        user = db_manager.create_user(name=name, email=email, role="user")
-        
-        conteudos = [await img_file.read() for img_file in images]
-        # Inferência fora do event loop: são segundos de CPU por foto.
+        # A mesma foto enviada duas vezes dava um par com distância 0 na
+        # calibração e puxava a média para ela.
+        conteudos, fotos_repetidas = dedupe_image_bytes(
+            [await img_file.read() for img_file in images]
+        )
+        # Inferência fora do event loop: são segundos de CPU por foto. As fotos
+        # são processadas ANTES de criar o usuário: falha do modelo, foto sem
+        # rosto ou rosto já cadastrado não deixam nada no banco.
         try:
             embeddings = await run_in_threadpool(_embeddings_from_images, conteudos)
         except FaceInferenceError as exc:
-            # Falha do modelo não é "foto sem rosto": desfaz o usuário recém-
-            # criado (antes ficava no banco, sem rosto) e diz o que houve.
+            # Falha do modelo não é "foto sem rosto": diz o que houve.
             logger.error(f"Cadastro de {name!r} interrompido: {exc}")
-            db_manager.delete_user(user.id)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="O serviço de reconhecimento falhou ao processar as fotos. Tente novamente."
             )
 
         if not embeddings:
-            db_manager.delete_user(user.id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Nenhum rosto válido encontrado nas imagens"
             )
-        
+
+        # Quase-duplicatas (mesma foto reencodada, frames seguidos de vídeo).
+        embeddings, fotos_quase_iguais = dedupe_embeddings(embeddings)
         avg_embedding = np.mean(embeddings, axis=0).tolist()
+
+        # O mesmo rosto sob outro nome: o log de acesso registraria a pessoa
+        # errada. Recusa sempre, sem opção de forçar.
+        conflito = face_service.find_identity_conflict(np.array(avg_embedding, dtype=np.float32))
+        if conflito is not None:
+            conflito_id, conflito_nome, distancia = conflito
+            logger.warning(
+                f"Cadastro de {name!r} recusado: rosto já cadastrado como "
+                f"{conflito_nome!r} (id {conflito_id}, distância {distancia:.3f})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Este rosto já está cadastrado como \"{conflito_nome}\" "
+                    f"(ID {conflito_id}). Cadastro recusado."
+                ),
+            )
+
+        user = db_manager.create_user(name=name, email=email, role="user")
         calibrated_threshold = face_service.calibrate_threshold([np.array(e, dtype=np.float32) for e in embeddings])
-        
+
         db_manager.add_embedding(
             user_id=user.id,
             embedding_data=avg_embedding,
@@ -354,7 +378,9 @@ async def register_user_with_face(
         
         response = {
             "message": "Usuário registrado com sucesso",
-            "user": user.to_dict()
+            "user": user.to_dict(),
+            "photos_used": len(embeddings),
+            "duplicate_photos_discarded": fotos_repetidas + fotos_quase_iguais,
         }
         if calibrated_threshold is not None:
             response["calibrated_threshold"] = calibrated_threshold

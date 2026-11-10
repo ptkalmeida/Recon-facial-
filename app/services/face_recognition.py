@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import logging
 import threading
 import time
@@ -83,6 +84,49 @@ INSIGHTFACE_MODULES = ["detection", "recognition"]
 
 #: Falhas seguidas de inferência a partir das quais /api/health fica degraded.
 INFERENCE_FAILURES_DEGRADED_AFTER = 5
+
+#: Distância de cosseno abaixo da qual duas fotos do MESMO cadastro contam como
+#: a mesma imagem (frames seguidos de vídeo, a mesma foto reencodada). Valor
+#: inicial, não medido - ajuste com scripts/evaluate_threshold.py.
+NEAR_DUPLICATE_DISTANCE = 0.02
+
+
+def dedupe_image_bytes(conteudos: list[bytes]) -> tuple[list[bytes], int]:
+    """Remove fotos byte a byte idênticas (SHA-256), mantendo a ordem.
+
+    A mesma foto enviada duas vezes no cadastro dava um par com distância 0:
+    `calibrate_threshold` saía apertado demais e a média pendia para ela.
+    Devolve (fotos únicas, quantas foram descartadas).
+    """
+    vistos: set[str] = set()
+    unicos: list[bytes] = []
+    for conteudo in conteudos:
+        digest = hashlib.sha256(conteudo).hexdigest()
+        if digest in vistos:
+            continue
+        vistos.add(digest)
+        unicos.append(conteudo)
+    return unicos, len(conteudos) - len(unicos)
+
+
+def dedupe_embeddings(embeddings: list, min_distance: float = NEAR_DUPLICATE_DISTANCE) -> tuple[list, int]:
+    """Remove embeddings quase idênticos a um já mantido (distância de cosseno).
+
+    Pega o que o hash não pega: a mesma imagem reencodada ou frames seguidos
+    de um vídeo. Os itens mantidos voltam como vieram (lista ou ndarray).
+    Devolve (mantidos, quantos foram descartados).
+    """
+    mantidos: list = []
+    unitarios: list[np.ndarray] = []
+    for item in embeddings:
+        vetor = np.asarray(item, dtype=np.float32)
+        norma = np.linalg.norm(vetor)
+        unitario = vetor / norma if norma > 0 else vetor
+        if any(1.0 - float(np.dot(unitario, k)) < min_distance for k in unitarios):
+            continue
+        mantidos.append(item)
+        unitarios.append(unitario)
+    return mantidos, len(embeddings) - len(mantidos)
 
 
 def _serializado(metodo):
@@ -793,6 +837,38 @@ class FaceRecognitionService:
         rejection_confidence = 1.0 - min(best_distance / (self.threshold * 1.5), 1.0)
         rejection_confidence = max(0.0, min(rejection_confidence, 1.0))
         return None, rejection_confidence, "unknown"
+
+    def find_identity_conflict(self, embedding: np.ndarray) -> tuple[int, str, float] | None:
+        """Pessoa já cadastrada cujo rosto bate com `embedding`, se houver.
+
+        Usado no cadastro: o mesmo rosto sob dois nomes faz o log de acesso
+        registrar a pessoa errada. Usa o limiar ESTRITO (`threshold`, sem a
+        histerese) e normaliza os dois lados - o embedding salvo pelo cadastro
+        da API é a média de vetores unitários, com norma < 1.
+
+        Devolve (user_id, nome, distância) do mais próximo abaixo do limiar,
+        ou None. No modo degradado (HOG) devolve None: essa distância mede
+        textura e iluminação, não identidade, e barraria cadastros legítimos.
+        """
+        if embedding is None or self.recognition_degraded:
+            return None
+        consulta = self._normalize_embedding(np.asarray(embedding, dtype=np.float32))
+        if consulta.size == 0:
+            return None
+
+        melhor: tuple[int, str, float] | None = None
+        with self._lock:
+            for user_id, conhecido in self._known_embeddings.items():
+                if len(conhecido) != len(consulta):
+                    continue
+                alvo = self._normalize_embedding(np.asarray(conhecido, dtype=np.float32))
+                if self.distance_metric == "cosine":
+                    distancia = 1.0 - float(np.dot(consulta, alvo))
+                else:
+                    distancia = float(np.linalg.norm(consulta - alvo))
+                if distancia < self.threshold and (melhor is None or distancia < melhor[2]):
+                    melhor = (user_id, self._known_users.get(user_id, ""), distancia)
+        return melhor
 
     def calibrate_threshold(self, embeddings: list[np.ndarray]) -> float | None:
         """Auto-calibrate threshold using intra-class distances from registration images.
