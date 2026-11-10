@@ -70,6 +70,8 @@ CONFIRMATION_MIN_FRAMES = settings_dict.get("face_recognition", {}).get("confirm
 _door = settings_dict.get("door", {})
 DOOR_OPEN_MIN_CONFIDENCE = _door.get("min_confidence", 0.8)
 REQUIRE_LIVENESS_FOR_DOOR = _door.get("require_liveness", True)
+# Segundos com o relé acionado (portão automático: 1, um pulso de botoeira).
+DOOR_OPEN_SECONDS = _door.get("open_seconds", 5)
 
 
 def cleanup_internal_states():
@@ -466,7 +468,7 @@ def handle_detection_results(results: dict, camera_id: Optional[str]) -> None:
                 continue
 
             logger.info(f"Usuário {detection['user_name']} reconhecido. Abrindo porta...")
-            door_manager.open_door(duration=5)
+            door_manager.open_door(duration=DOOR_OPEN_SECONDS)
             # ------------------------------
         else:
             desconhecidos.append(detection)
@@ -629,7 +631,7 @@ async def export_data(
 
 @router.post("/hardware/open-door")
 async def manual_open_door(current_user: dict = Depends(require_admin)):
-    door_manager.open_door(duration=5)
+    door_manager.open_door(duration=DOOR_OPEN_SECONDS)
     db_manager.log_access(
         user_id=current_user.get("id"),
         action="manual_door_open",
@@ -686,6 +688,12 @@ async def health_check():
             "estado. Instale insightface, deepface+tensorflow ou face_recognition."
         )
 
+    # Fechadura habilitada e sem comunicação: o reconhecimento funciona, mas
+    # ninguém entra. Só o estado vai no payload (o endpoint é público).
+    door = door_manager.get_status()
+    if door["enabled"] and not door["connected"]:
+        status = "degraded"
+
     health_payload = {
         "status": status,
         "service": "Face Recognition Pro 3.0",
@@ -697,6 +705,7 @@ async def health_check():
         "recognition": recognition,
         "model_ready": service_status["model_ready"],
         "model_error": service_status["model_error"],
+        "door": door,
         "uptime_seconds": round(uptime, 2),
         "version": version
     }

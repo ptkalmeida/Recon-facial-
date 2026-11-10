@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     # imagem estática, não ataque de apresentação elaborado - ver SECURITY.md),
     # mas antes o resultado dela era simplesmente descartado.
     door_require_liveness: bool = True
+    # Fechadura via Arduino + relé na serial (ver docs/INSTALACAO_PORTA.md).
+    # Desligado: a abertura só é registrada no log. `door_open_seconds` é quanto
+    # tempo o relé fica acionado - em portão automático, 1 (um pulso de botoeira).
+    door_enabled: bool = False
+    door_serial_port: str = "COM3"
+    door_baudrate: int = Field(9600, gt=0)
+    door_open_seconds: int = Field(5, ge=1, le=30)
 
     # Logging. Os quatro campos eram configuração morta: main.py chamava
     # logging.basicConfig() com nível fixo e sem handler de arquivo, então
@@ -263,6 +270,10 @@ YAML_TO_FIELD: dict[tuple[str, ...], str] = {
     ("face_recognition", "allow_insecure_hog_embeddings"): "allow_insecure_hog_embeddings",
     ("door", "min_confidence"): "door_min_confidence",
     ("door", "require_liveness"): "door_require_liveness",
+    ("door", "enabled"): "door_enabled",
+    ("door", "serial_port"): "door_serial_port",
+    ("door", "baudrate"): "door_baudrate",
+    ("door", "open_seconds"): "door_open_seconds",
     ("logging", "level"): "log_level",
     ("logging", "log_file"): "log_file",
     ("logging", "max_size_mb"): "log_max_size_mb",
@@ -401,7 +412,11 @@ settings_dict = {
     },
     "door": {
         "min_confidence": settings.door_min_confidence,
-        "require_liveness": settings.door_require_liveness
+        "require_liveness": settings.door_require_liveness,
+        "enabled": settings.door_enabled,
+        "serial_port": settings.door_serial_port,
+        "baudrate": settings.door_baudrate,
+        "open_seconds": settings.door_open_seconds,
     },
     "logging": {
         "level": settings.log_level,
