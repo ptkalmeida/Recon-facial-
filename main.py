@@ -160,6 +160,11 @@ async def lifespan(app: FastAPI):
     if alert_service.enabled:
         logger.info("Alertas ativos nos canais: %s", ", ".join(alert_service.channel_names) or "nenhum")
 
+    # Fechadura: conecta e trava. Leva ~2 s (o Arduino reinicia ao abrir a
+    # serial), por isso fora do event loop. Falhar aqui não derruba o sistema:
+    # a próxima abertura tenta reconectar.
+    await asyncio.to_thread(api_routes.door_manager.connect)
+
     camera_worker = None
     camera_settings = settings_dict.get("server_camera", {})
     if camera_settings.get("enabled"):
@@ -197,6 +202,7 @@ async def lifespan(app: FastAPI):
     if camera_worker:
         camera_worker.stop()
     alert_service.stop()
+    await asyncio.to_thread(api_routes.door_manager.close)
 
 
 # Validate security settings on startup

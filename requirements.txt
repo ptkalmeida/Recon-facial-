@@ -47,6 +47,10 @@ opencv-python==4.13.0.92
 numpy==2.4.4
 pillow==12.2.0
 
+# --- Porta fisica ---
+pyserial==3.5      # Arduino + rele na USB (app/services/hardware.py). So e usado
+                   # com door.enabled=true; sem ele a porta fica so no log.
+
 # --- Exportacao de relatorios ---
 openpyxl==3.1.5    # Excel
 reportlab==4.4.10  # PDF

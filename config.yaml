@@ -80,6 +80,15 @@ door:
   # calculado e ignorado, e a porta abria so por confianca - uma foto impressa
   # com match confiante abria a porta.
   require_liveness: true
+  # Fechadura real (Arduino + rele na USB). Guia: docs/INSTALACAO_PORTA.md
+  # false = so registra "abrindo porta" no log, nada e enviado.
+  enabled: false
+  # Porta serial do Arduino. Windows: COM3, COM4... (python scripts/test_door.py
+  # --list mostra as disponiveis). Linux: /dev/ttyUSB0 ou /dev/ttyACM0.
+  serial_port: COM3
+  baudrate: 9600
+  # Segundos com o rele acionado. Fechadura: 5. Portao automatico: 1 (pulso).
+  open_seconds: 5
 
 anti_spoofing:
   enabled: true

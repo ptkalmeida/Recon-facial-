@@ -171,9 +171,12 @@ face_recognition:
   confirmation_min_frames: 3 # quadros para confirmar antes de registrar
   allow_insecure_hog_embeddings: false
 
-door:                        # porta física
+door:                        # porta física (instalação: docs/INSTALACAO_PORTA.md)
   min_confidence: 0.8
   require_liveness: true     # exige vivacidade, não só confiança
+  enabled: false             # true = aciona o Arduino + relé na USB
+  serial_port: COM3
+  open_seconds: 5            # portão automático: 1 (pulso de botoeira)
 
 presence:
   timeout_seconds: 60
