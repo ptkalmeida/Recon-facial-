@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from app.config import settings, settings_dict
 from app.security.auth import auth_manager, validate_password_strength
 from app.database.db import db_manager
-from app.services.face_recognition import FaceRecognitionService
+from app.services.face_recognition import (
+    FaceRecognitionService, dedupe_embeddings, dedupe_image_bytes,
+)
 
 
 def authenticate_cli(max_attempts: int = 3) -> bool:
@@ -62,14 +64,39 @@ def process_images(image_paths: List[str], face_service: FaceRecognitionService)
     ensuring consistency between registration and recognition.
     """
     embeddings = []
-    
-    print(f'\n📸 Processando {len(image_paths)} imagem(ns)...')
-    
+
+    # O mesmo arquivo informado duas vezes (ou cópias idênticas com outro
+    # nome) dava um par com distância 0 e puxava a média para aquela foto.
+    lidos: List[tuple] = []
     for img_path in image_paths:
+        try:
+            lidos.append((img_path, Path(img_path).read_bytes()))
+        except OSError:
+            lidos.append((img_path, None))
+    unicos, repetidas = dedupe_image_bytes([c for _, c in lidos if c is not None])
+    # dedupe_image_bytes devolve os mesmos objetos bytes, na ordem: o que não
+    # está na frente da fila de únicos é repetição de um anterior.
+    restantes = list(unicos)
+    selecionados = []
+    for img_path, conteudo in lidos:
+        if conteudo is not None:
+            if restantes and restantes[0] is conteudo:
+                restantes.pop(0)
+            else:
+                print(f'   ↷ {img_path}: foto repetida, ignorada')
+                continue
+        selecionados.append((img_path, conteudo))
+
+    print(f'\n📸 Processando {len(selecionados)} imagem(ns)...')
+
+    for img_path, conteudo in selecionados:
         print(f'   → {img_path}')
-        
-        # Load image
-        img = cv2.imread(img_path)
+
+        # Load image (imdecode dos bytes já lidos; cv2.imread falha com
+        # caminho acentuado no Windows)
+        img = None
+        if conteudo is not None:
+            img = cv2.imdecode(np.frombuffer(conteudo, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             print(f'      ⚠️  Não foi possível carregar imagem')
             continue
@@ -87,6 +114,11 @@ def process_images(image_paths: List[str], face_service: FaceRecognitionService)
     if not embeddings:
         print('\n❌ Erro: Nenhum embedding facial válido encontrado.')
         return None
+
+    # Quase-duplicatas: a mesma foto reencodada, frames seguidos de vídeo.
+    embeddings, quase_iguais = dedupe_embeddings(embeddings)
+    if repetidas or quase_iguais:
+        print(f'   ↷ {repetidas + quase_iguais} foto(s) repetida(s) descartada(s)')
 
     # Average embeddings from all valid images
     if len(embeddings) == 1:
@@ -115,7 +147,18 @@ def register_person(name: str, email: Optional[str], image_paths: List[str], fac
     embedding = process_images(image_paths, face_service)
     if embedding is None:
         return False
-    
+
+    # O mesmo rosto sob outro nome: o log de acesso registraria a pessoa
+    # errada. Recusa sempre. Carrega os rostos do banco agora - o serviço do
+    # CLI não os tem em memória, e alguém pode ter cadastrado pela API.
+    face_service.load_known_faces(db_manager.get_all_embeddings_data())
+    conflito = face_service.find_identity_conflict(embedding)
+    if conflito is not None:
+        conflito_id, conflito_nome, distancia = conflito
+        print(f'\n❌ Cadastro recusado: este rosto já está cadastrado como '
+              f'"{conflito_nome}" (ID: {conflito_id}, distância {distancia:.3f}).')
+        return False
+
     try:
         # Create user in database
         print(f'\n💾 Salvando no banco de dados...')
